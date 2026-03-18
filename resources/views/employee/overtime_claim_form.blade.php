@@ -43,8 +43,23 @@
       <div class="breadcrumb">Attendance · OT Claims · {{ isset($claim) ? 'Edit' : 'New' }}</div>
       <h2 style="margin:0 0 .3rem 0;">{{ isset($claim) ? 'Edit OT Claim' : 'Claim OT' }}</h2>
 
-      <div class="rules-box">
-        <strong>Rules:</strong> Date must not be in the future. Minimum claim: 0.5 hour. Maximum per day: 8 hours. Reason required (min 10 characters). Hours are auto-calculated from start, end and break.
+      <div class="rules-box" id="rules-normal">
+        <strong>Normal Working Day OT:</strong>
+        <ul style="margin:6px 0 0 18px; padding:0; list-style:disc;">
+          <li>Date must not be in the future.</li>
+          <li>OT is only counted <strong>after official clock-out time</strong>.</li>
+          <li>Minimum claim: 0.5 hour. Maximum per day: 8 hours.</li>
+          <li>Reason required (min 10 characters). Hours auto-calculated from times and break.</li>
+        </ul>
+      </div>
+      <div class="rules-box" id="rules-holiday" style="display:none;">
+        <strong>Public Holiday / Rest Day OT:</strong>
+        <ul style="margin:6px 0 0 18px; padding:0; list-style:disc;">
+          <li>Date must not be in the future.</li>
+          <li>OT is counted from <strong>selected start to end time</strong> (minus break).</li>
+          <li>Minimum claim: 0.5 hour. Maximum per day: 8 hours.</li>
+          <li>Reason required (min 10 characters). Hours auto-calculated from times and break.</li>
+        </ul>
       </div>
 
       @if(isset($hasSupervisor) && !$hasSupervisor)
@@ -68,9 +83,20 @@
       </div>
 
       <div class="card">
+        <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+          <button type="button" class="btn btn-primary" id="btn-type-normal">Normal Working Day OT</button>
+          <button type="button" class="btn btn-secondary" id="btn-type-rest">Rest Day OT</button>
+          <button type="button" class="btn btn-secondary" id="btn-type-holiday">Public Holiday OT</button>
+        </div>
+        <p style="margin:0 0 6px; font-size:12px; color:#64748b;">
+          The system will auto-detect <strong>day type</strong> (normal / rest day / public holiday) from calendar configuration and apply the correct OT rate.
+        </p>
+
         <form method="POST" action="{{ isset($claim) ? route('employee.ot_claims.update', $claim) : route('employee.ot_claims.store') }}" enctype="multipart/form-data" id="otClaimForm">
           @csrf
           @if(isset($claim)) @method('PUT') @endif
+
+          <input type="hidden" name="ot_mode" id="ot_mode" value="{{ old('ot_mode', 'NORMAL') }}">
 
           <div class="grid">
             <div>
@@ -105,12 +131,9 @@
 
           <div class="grid" style="margin-top:14px;">
             <div>
-              <label for="rate_type">Rate (multiplier)</label>
-              <select id="rate_type" name="rate_type">
-                <option value="1.5" {{ old('rate_type', isset($claim) ? $claim->rate_type : 1.5) == 1.5 ? 'selected' : '' }}>1.5x — Normal OT</option>
-                <option value="2" {{ old('rate_type', isset($claim) ? $claim->rate_type : 1.5) == 2 ? 'selected' : '' }}>2.0x — Rest day</option>
-                <option value="3" {{ old('rate_type', isset($claim) ? $claim->rate_type : 1.5) == 3 ? 'selected' : '' }}>3.0x — Public holiday</option>
-              </select>
+              <label>OT Rate</label>
+              <div id="rate_display" style="font-weight:600; background:#f1f5f9; padding:10px 12px; border-radius:10px;">—</div>
+              <input type="hidden" id="rate_type" name="rate_type" value="{{ old('rate_type', isset($claim) ? $claim->rate_type : 1.0) }}">
             </div>
           </div>
 
@@ -129,27 +152,9 @@
             </div>
           </div>
 
-          @if(!empty($areas) && $areas->count() > 0)
-          <div class="location-section" style="margin-top:8px;">
-            <label for="route_to_area_id">Route to area (optional)</label>
-            <select id="route_to_area_id" name="route_to_area_id">
-              <option value="">— My department (default) —</option>
-              @foreach($areas as $a)
-                <option value="{{ $a->id }}" {{ old('route_to_area_id', isset($claim) ? $claim->area_id : '') == $a->id ? 'selected' : '' }}>{{ $a->name }}</option>
-              @endforeach
-            </select>
-          </div>
-          @endif
+          {{-- Removed "Route to area" selector as requested --}}
 
-          <div id="outside-fields" class="location-section" style="margin-top:8px;">
-            <label for="proof_image">Proof image (required for Client site / Other)</label>
-            <input type="file" id="proof_image" name="proof_image" accept="image/*">
-            @if(isset($claim) && $claim->proof_image_path)
-              <p style="margin-top:6px; font-size:13px;">Current: <a href="{{ asset('storage/'.$claim->proof_image_path) }}" target="_blank">View proof</a></p>
-            @endif
-            <label for="missing_proof_reason" style="margin-top:10px;">If no proof, reason *</label>
-            <textarea id="missing_proof_reason" name="missing_proof_reason" placeholder="Explain why proof is not attached">{{ old('missing_proof_reason', $claim->missing_proof_reason ?? '') }}</textarea>
-          </div>
+          {{-- Proof image section removed as requested --}}
 
           <div style="margin-top:14px;">
             <label for="reason">Reason * (min 10 characters)</label>
@@ -160,19 +165,18 @@
             <input type="file" id="attachment" name="attachment" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx">
             <small style="color:#64748b;">Photo, email approval, or job order. Max 10MB.</small>
           </div>
-          <div style="margin-top:12px;">
-            <label for="supporting_info">Supporting info (optional)</label>
-            <textarea id="supporting_info" name="supporting_info" placeholder="Additional details">{{ old('supporting_info', $claim->supporting_info ?? '') }}</textarea>
-          </div>
 
           <div class="summary-card" id="summary-card">
             <strong>Summary</strong>
             <div class="row"><span>Date</span><span id="sum-date">—</span></div>
+            <div class="row"><span>Day type</span><span id="sum-day-type">—</span></div>
             <div class="row"><span>Start – End</span><span id="sum-times">—</span></div>
+            <div class="row"><span>Counted from</span><span id="sum-counted-start">—</span></div>
             <div class="row"><span>Break</span><span id="sum-break">—</span></div>
             <div class="row"><span>Final hours</span><span id="sum-hours">—</span></div>
             <div class="row"><span>Rate</span><span id="sum-rate">—</span></div>
             <div class="row"><span>Sent to</span><span id="sum-supervisor">{{ $supervisorName ?? '—' }} ({{ $departmentName ?? '—' }})</span></div>
+            <div class="row"><span>Validation</span><span id="sum-validation">—</span></div>
           </div>
 
           <input type="hidden" name="submit_now" id="submit_now_val" value="{{ old('submit_now', !isset($claim) || $claim->status !== 'DRAFT') ? '1' : '0' }}">
@@ -200,7 +204,21 @@
     var btnSubmit = document.getElementById('btn_submit');
     var duplicateWarn = document.getElementById('duplicate-warning');
     var checkUrl = "{{ route('employee.ot_claims.check_duplicate') }}";
+    var dayInfoUrl = "{{ route('employee.ot_claims.day_info') }}";
     var csrf = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    var otModeInput = document.getElementById('ot_mode');
+    var btnTypeNormal = document.getElementById('btn-type-normal');
+    var btnTypeRest = document.getElementById('btn-type-rest');
+    var btnTypeHoliday = document.getElementById('btn-type-holiday');
+    var rulesNormal = document.getElementById('rules-normal');
+    var rulesHoliday = document.getElementById('rules-holiday');
+    var rateInput = document.getElementById('rate_type');
+    var rateDisplay = document.getElementById('rate_display');
+
+    var currentDayType = null;
+    var officialClockOut = null; // company work end time (from config)
+    var attendanceClockOut = null; // employee attendance clock-out (reference only)
+    var baseValidationMessage = 'OK';
 
     function parseTime(s) {
       var p = s.split(':');
@@ -219,10 +237,16 @@
       var end = parseTime(endEl.value);
       var breakM = parseInt(breakEl.value,10) || 0;
       if (end <= start) end += 24*60;
-      var totalM = Math.max(0, end - start - breakM);
+
+      var effectiveStart = start;
+      if (otModeInput.value === 'NORMAL' && officialClockOut != null) {
+        effectiveStart = Math.max(effectiveStart, officialClockOut);
+      }
+
+      var totalM = Math.max(0, end - effectiveStart - breakM);
       var rawHours = totalM / 60;
       var rounded = Math.round(rawHours * 2) / 2;
-      return { raw: rawHours, rounded: rounded, totalM: totalM };
+      return { raw: rawHours, rounded: rounded, totalM: totalM, effectiveStart: effectiveStart };
     }
     function updateHoursUI() {
       var r = computeHours();
@@ -233,12 +257,34 @@
     }
     function updateSummary() {
       document.getElementById('sum-date').textContent = dateEl.value || '—';
+      document.getElementById('sum-day-type').textContent = currentDayType || '—';
       document.getElementById('sum-times').textContent = (startEl.value || '—') + ' – ' + (endEl.value || '—');
       document.getElementById('sum-break').textContent = (breakEl.value || '0') + ' min';
       var r = computeHours();
       document.getElementById('sum-hours').textContent = r.rounded + ' h';
-      var rate = document.getElementById('rate_type');
-      document.getElementById('sum-rate').textContent = (rate ? rate.options[rate.selectedIndex].text : '—');
+      if (r.effectiveStart != null) {
+        var h = Math.floor(r.effectiveStart / 60);
+        var m = r.effectiveStart % 60;
+        document.getElementById('sum-counted-start').textContent =
+          (h.toString().padStart(2,'0')) + ':' + (m.toString().padStart(2,'0'));
+      } else {
+        document.getElementById('sum-counted-start').textContent = '—';
+      }
+      document.getElementById('sum-rate').textContent = rateDisplay ? rateDisplay.textContent : '—';
+
+      // Build validation message (mode/day-type + soft warning if OT beyond attendance clock-out)
+      var validationMsg = baseValidationMessage || 'OK';
+      if (attendanceClockOut != null && endEl.value) {
+        var endM = parseTime(endEl.value);
+        // handle overnight UI display similar to computeHours
+        if (endM <= parseTime(startEl.value)) {
+          endM += 24 * 60;
+        }
+        if (endM > attendanceClockOut) {
+          validationMsg = 'Your OT end time is later than your recorded attendance clock-out. Supervisor/HR will review this claim.';
+        }
+      }
+      document.getElementById('sum-validation').textContent = validationMsg;
     }
 
     function checkDuplicate() {
@@ -268,13 +314,97 @@
         .catch(function() { duplicateWarn.style.display = 'none'; });
     }
 
-    dateEl.addEventListener('change', function() { checkDuplicate(); updateSummary(); });
+    function applyDayInfo(data) {
+      currentDayType = data.day_type_label || data.day_type || null;
+      officialClockOut = data.official_clock_out_minutes != null ? data.official_clock_out_minutes : null;
+      attendanceClockOut = data.attendance_clock_out_minutes != null ? data.attendance_clock_out_minutes : null;
+      baseValidationMessage = data.validation_message || 'OK';
+
+      updateSummary();
+
+      // Toggle rules box appearance
+      if (otModeInput.value === 'NORMAL') {
+        rulesNormal.style.display = 'block';
+        rulesHoliday.style.display = 'none';
+      } else {
+        rulesNormal.style.display = 'none';
+        rulesHoliday.style.display = 'block';
+      }
+
+      updateHoursUI();
+    }
+
+    function fetchDayInfo() {
+      var d = dateEl.value;
+      if (!d) {
+        currentDayType = null;
+        officialClockOut = null;
+        attendanceClockOut = null;
+        baseValidationMessage = '—';
+        updateSummary();
+        return;
+      }
+      var params = new URLSearchParams();
+      params.append('date', d);
+      params.append('ot_mode', otModeInput.value);
+      fetch(dayInfoUrl + '?' + params.toString(), {
+        headers: {
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest',
+          'X-CSRF-TOKEN': csrf
+        }
+      })
+        .then(function(res){ return res.json(); })
+        .then(function(data){ applyDayInfo(data); })
+        .catch(function(){
+          currentDayType = null;
+          officialClockOut = null;
+          attendanceClockOut = null;
+          baseValidationMessage = 'Unable to detect day type.';
+          updateSummary();
+        });
+    }
+
+    function setMode(mode) {
+      otModeInput.value = mode;
+      // reset all to secondary
+      btnTypeNormal.classList.remove('btn-primary'); btnTypeNormal.classList.add('btn-secondary');
+      btnTypeRest.classList.remove('btn-primary'); btnTypeRest.classList.add('btn-secondary');
+      btnTypeHoliday.classList.remove('btn-primary'); btnTypeHoliday.classList.add('btn-secondary');
+
+      if (mode === 'NORMAL') {
+        btnTypeNormal.classList.remove('btn-secondary');
+        btnTypeNormal.classList.add('btn-primary');
+        if (rateInput) rateInput.value = 1.0;
+        if (rateDisplay) rateDisplay.textContent = '1.0x — Normal OT';
+      } else if (mode === 'REST') {
+        btnTypeRest.classList.remove('btn-secondary');
+        btnTypeRest.classList.add('btn-primary');
+        if (rateInput) rateInput.value = 2.0;
+        if (rateDisplay) rateDisplay.textContent = '2.0x — Rest day OT';
+      } else if (mode === 'HOLIDAY') {
+        btnTypeHoliday.classList.remove('btn-secondary');
+        btnTypeHoliday.classList.add('btn-primary');
+        if (rateInput) rateInput.value = 3.0;
+        if (rateDisplay) rateDisplay.textContent = '3.0x — Public holiday OT';
+      }
+
+      // For calculation, REST & HOLIDAY share same rule as holiday/rest mode
+      var calcMode = (mode === 'NORMAL') ? 'NORMAL' : 'HOLIDAY_REST';
+      otModeInput.value = calcMode;
+      fetchDayInfo();
+      updateSummary();
+    }
+
+    dateEl.addEventListener('change', function() { checkDuplicate(); fetchDayInfo(); });
     startEl.addEventListener('input', updateHoursUI);
     startEl.addEventListener('change', updateHoursUI);
     endEl.addEventListener('input', updateHoursUI);
     endEl.addEventListener('change', updateHoursUI);
     breakEl.addEventListener('change', updateHoursUI);
-    document.getElementById('rate_type').addEventListener('change', updateSummary);
+    btnTypeNormal.addEventListener('click', function(){ setMode('NORMAL'); });
+    btnTypeRest.addEventListener('click', function(){ setMode('REST'); });
+    btnTypeHoliday.addEventListener('click', function(){ setMode('HOLIDAY'); });
 
     form.addEventListener('submit', function(e) {
       var submitBtn = e.submitter && e.submitter.value === 'submit';
@@ -317,6 +447,10 @@
 
     updateHoursUI();
     checkDuplicate();
+    fetchDayInfo();
+
+    // Initialise mode from hidden input (edit mode) or default
+    setMode('NORMAL');
   })();
   </script>
 </body>

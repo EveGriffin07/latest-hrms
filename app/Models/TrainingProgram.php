@@ -2,33 +2,41 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class TrainingProgram extends Model
 {
+    use HasFactory;
+
     protected $primaryKey = 'training_id';
-    
+
+    // Add ALL columns that you want to save to the database here
     protected $fillable = [
         'department_id',
         'training_name',
         'tr_description',
         'start_date',
+        'start_time',       // ADDED
         'end_date',
-        'provider', // We will store 'Trainer Name' here
+        'provider',
+        'trainer_company',  // ADDED
+        'trainer_email',    // ADDED
         'tr_status',
         'mode',
-        'location'
+        'max_participants', // ADDED
+        'location',
+        'qr_token',
     ];
 
-    // Relationship: A program has many enrolled employees
-    public function enrollments()
-    {
-        return $this->hasMany(TrainingEnrollment::class, 'training_id', 'training_id');
-    }
-
-    // Relationship: Get the Department details
+    // --- Relationships ---
     public function department()
     {
-        return $this->belongsTo(Department::class, 'department_id', 'department_id');
+        return $this->belongsTo(Department::class, 'department_id');
+    }
+
+    public function enrollments()
+    {
+        return $this->hasMany(TrainingEnrollment::class, 'training_id');
     }
 }

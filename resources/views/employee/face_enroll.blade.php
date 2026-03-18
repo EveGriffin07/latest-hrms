@@ -3,228 +3,218 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Face Enrollment</title>
+  <title>Face Enrollment - Upload Photo</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
   <link rel="stylesheet" href="{{ asset('css/hrms.css') }}">
   <style>
-    main { padding:2rem; }
-    .notice { padding:12px 14px; border-radius:10px; margin-bottom:14px; }
-    .success { background:#ecfdf3; border:1px solid #bbf7d0; color:#166534; }
-    .error { background:#fef2f2; border:1px solid #fecdd3; color:#991b1b; }
-    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin-top:10px; }
-    .thumb { background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; padding:10px; text-align:center; }
+    .enroll-page { max-width: 480px; margin: 0 auto; padding: 24px; }
+    .enroll-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px; box-shadow: 0 8px 20px rgba(15,23,42,0.06); }
+    .enroll-card h1 { margin: 0 0 8px; font-size: 1.25rem; color: #0f172a; }
+    .enroll-card p { margin: 0 0 20px; color: #64748b; font-size: 14px; line-height: 1.5; }
+    .notice { padding: 12px 14px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; }
+    .notice.success { background: #ecfdf3; border: 1px solid #bbf7d0; color: #166534; }
+    .notice.error { background: #fef2f2; border: 1px solid #fecdd3; color: #991b1b; }
+    .upload-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 12px;
+      padding: 28px;
+      text-align: center;
+      background: #f8fafc;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-zone:hover, .upload-zone.dragover { border-color: #0ea5e9; background: #f0f9ff; }
+    .upload-zone input[type="file"] { display: none; }
+    .upload-zone .icon { font-size: 2.5rem; color: #94a3b8; margin-bottom: 8px; }
+    .upload-zone .hint { color: #64748b; font-size: 14px; }
+    .preview-wrap { margin-top: 16px; text-align: center; }
+    .preview-wrap img { max-width: 100%; max-height: 240px; border-radius: 10px; border: 1px solid #e5e7eb; object-fit: contain; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 10px; font-weight: 600; cursor: pointer; border: none; font-size: 14px; }
+    .btn-primary { background: #0ea5e9; color: #fff; }
+    .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn-secondary { background: #e2e8f0; color: #475569; }
+    .mt-16 { margin-top: 16px; }
+    .back-link { color: #64748b; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; margin-bottom: 16px; }
+    .back-link:hover { color: #0f172a; }
+    .enrolled-badge { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; background: #ecfdf3; color: #166534; border-radius: 8px; font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .enrolled-photo { max-width: 120px; max-height: 120px; border-radius: 8px; object-fit: cover; border: 1px solid #e5e7eb; }
+    .enrolled-exact-wrap { margin-top: 12px; margin-bottom: 16px; }
+    .enrolled-exact-wrap .enrolled-exact-label { font-size: 12px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: block; }
+    .enrolled-exact-wrap .enrolled-exact-img { display: block; max-width: 100%; max-height: 320px; width: auto; height: auto; border-radius: 12px; border: 1px solid #e5e7eb; box-shadow: 0 4px 12px rgba(0,0,0,0.08); object-fit: contain; background: #f8fafc; }
+    .or-divider { display: flex; align-items: center; gap: 12px; margin: 16px 0; color: #94a3b8; font-size: 13px; }
+    .or-divider::before, .or-divider::after { content: ''; flex: 1; height: 1px; background: #e2e8f0; }
+    .camera-wrap { display: none; margin-top: 12px; }
+    .camera-wrap.active { display: block; }
+    .camera-wrap video { width: 100%; max-height: 280px; border-radius: 12px; background: #0f172a; }
+    .camera-actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+    .camera-actions .btn { flex: 1; min-width: 120px; justify-content: center; }
+    .switch-mode { margin-top: 12px; }
+    .switch-mode button { background: none; border: none; color: #64748b; font-size: 13px; cursor: pointer; text-decoration: underline; padding: 0; }
+    .switch-mode button:hover { color: #0ea5e9; }
   </style>
 </head>
 <body>
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-      <span><i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name ?? 'Employee' }}</span>
+      <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;"><i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name ?? 'Employee' }}</a>
     </div>
   </header>
   <div class="container">
     @include('employee.layout.sidebar')
     <main>
-      <h2>Face Enrollment</h2>
-      <p class="subtitle">Capture 3–5 clear face images to create your template.</p>
+      <a href="{{ route('employee.dashboard') }}" class="back-link"><i class="fa-solid fa-arrow-left"></i> Back</a>
 
-      @if(session('success'))
-        <div class="notice success">{{ session('success') }}</div>
-      @endif
-      @if($errors->any())
-        <div class="notice error">{{ $errors->first() }}</div>
-      @endif
+      <div class="enroll-page">
+        <div class="enroll-card">
+          <h1><i class="fa-solid fa-face-smile"></i> Face Enrollment</h1>
+          <p>Upload a clear photo of your face, or take a picture with your camera. It will be stored and used to verify you when you check in/out.</p>
 
-      <form id="enroll-form" method="POST" enctype="multipart/form-data" action="{{ route('employee.face.enroll.post') }}" class="form-card">
-        @csrf
-        <div class="form-group">
-          <label>Camera Capture (3–5 images required)</label>
-          <video id="camera" autoplay playsinline muted style="width:100%; max-width:520px; border-radius:12px; background:#0f172a;"></video>
-          <canvas id="snapshot" hidden></canvas>
-          <div class="controls" style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-            <button type="button" class="btn btn-secondary btn-small" id="start"><i class="fa-solid fa-camera"></i> Start Camera</button>
-            <button type="button" class="btn btn-primary btn-small" id="capture"><i class="fa-solid fa-circle-dot"></i> Capture</button>
-            <button type="button" class="btn btn-secondary btn-small" id="clear-captures"><i class="fa-solid fa-rotate-left"></i> Clear Captures</button>
-            <span id="capture-count" style="align-self:center; color:#64748b; font-weight:600;">0 / 5 captured</span>
-          </div>
-          <div class="grid" id="capture-preview"></div>
-          <div id="file-error" style="color:#b91c1c; font-size:13px; margin-top:6px; display:none;">Please capture between 3 and 5 images.</div>
-        </div>
+          @if(session('success'))
+            <div class="notice success">{{ session('success') }}</div>
+          @endif
+          @if($errors->any())
+            <div class="notice error">{{ $errors->first() }}</div>
+          @endif
 
-        <button type="submit" class="btn btn-primary"><i class="fa-solid fa-cloud-arrow-up"></i> Enroll</button>
-      </form>
-
-      <h3 style="margin-top:20px;">Existing Templates</h3>
-      <div class="grid">
-        @forelse($templates as $tpl)
-          <div class="thumb">
-            <div style="font-weight:700;">#{{ $loop->iteration }}</div>
-            <div>ID: {{ $tpl->id }}</div>
-            <div>Active: {{ $tpl->is_active ? 'Yes' : 'No' }}</div>
-            <div>Created: {{ $tpl->created_at->format('Y-m-d H:i') }}</div>
-            @if($tpl->image_path)
-              <img src="{{ asset('storage/'.$tpl->image_path) }}" alt="Template image" style="width:100%; border-radius:10px; margin-top:8px; object-fit:cover; max-height:140px;">
-            @else
-              <div style="margin-top:8px; color:#94a3b8; font-size:13px;">No image stored</div>
+          @if($faceData ?? null)
+            <div class="enrolled-badge"><i class="fa-solid fa-check-circle"></i> Face enrolled</div>
+            @if($faceData->photo_path && \Illuminate\Support\Facades\Storage::disk('public')->exists($faceData->photo_path))
+              <div class="enrolled-exact-wrap">
+                <span class="enrolled-exact-label"><i class="fa-solid fa-image"></i> Enrolled photo (exact image on file)</span>
+                <img src="{{ \Illuminate\Support\Facades\Storage::disk('public')->url($faceData->photo_path) }}" alt="Enrolled photo" class="enrolled-exact-img">
+              </div>
             @endif
-            <form method="POST" action="{{ route('employee.face.templates.destroy', $tpl) }}" style="margin-top:8px;">
+            <p style="margin-top:12px; color:#64748b; font-size:13px;">You can use face attendance (camera scan) to check in and check out. To re-upload, contact HR to reset your enrollment.</p>
+          @else
+            <form method="POST" action="{{ route('employee.face.enroll.post') }}" enctype="multipart/form-data" id="enroll-form">
               @csrf
-              @method('DELETE')
-              <button type="submit" class="btn btn-secondary btn-small" onclick="return confirm('Delete this template?');">Delete</button>
+              <input type="file" id="photo" name="photo" accept="image/jpeg,image/jpg,image/png" required style="display:none;">
+              <div class="upload-zone" id="upload-zone" role="button" tabindex="0">
+                <div class="icon"><i class="fa-solid fa-cloud-arrow-up"></i></div>
+                <div class="hint">Click or drag a photo here</div>
+                <div class="hint" style="margin-top:4px;">One person, face clearly visible, good lighting (JPG/PNG, max 5MB)</div>
+              </div>
+              <div class="or-divider">or</div>
+              <div>
+                <button type="button" class="btn btn-secondary" id="take-picture-btn"><i class="fa-solid fa-camera"></i> Take picture</button>
+              </div>
+              <div class="camera-wrap" id="camera-wrap">
+                <video id="camera-video" autoplay playsinline muted></video>
+                <div class="camera-actions">
+                  <button type="button" class="btn btn-primary" id="capture-btn" style="display:none;"><i class="fa-solid fa-circle-dot"></i> Capture</button>
+                  <button type="button" class="btn btn-secondary" id="stop-camera-btn" style="display:none;">Stop camera</button>
+                </div>
+                <div class="switch-mode mt-16"><button type="button" id="back-to-upload">Use uploaded photo instead</button></div>
+              </div>
+              <div class="preview-wrap" id="preview-wrap" style="display:none;">
+                <img id="preview-img" src="" alt="Preview">
+                <p style="margin:8px 0 0; font-size:13px; color:#64748b;">Selected photo</p>
+              </div>
+              <div class="mt-16">
+                <button type="submit" class="btn btn-primary" id="submit-btn" disabled><i class="fa-solid fa-upload"></i> Upload &amp; Enroll</button>
+              </div>
             </form>
-          </div>
-        @empty
-          <p>No templates yet.</p>
-        @endforelse
+          @endif
+        </div>
       </div>
     </main>
   </div>
   <script>
     (function () {
-      const camera = document.getElementById('camera');
-      const canvas = document.getElementById('snapshot');
-      const startBtn = document.getElementById('start');
-      const captureBtn = document.getElementById('capture');
-      const clearBtn = document.getElementById('clear-captures');
-      const preview = document.getElementById('capture-preview');
-      const countEl = document.getElementById('capture-count');
+      const zone = document.getElementById('upload-zone');
+      const input = document.getElementById('photo');
+      const previewWrap = document.getElementById('preview-wrap');
+      const previewImg = document.getElementById('preview-img');
+      const submitBtn = document.getElementById('submit-btn');
+      const takePictureBtn = document.getElementById('take-picture-btn');
+      const cameraWrap = document.getElementById('camera-wrap');
+      const cameraVideo = document.getElementById('camera-video');
+      const captureBtn = document.getElementById('capture-btn');
+      const stopCameraBtn = document.getElementById('stop-camera-btn');
+      const backToUpload = document.getElementById('back-to-upload');
+      const orDivider = document.querySelector('.or-divider');
 
-      const totalEl = document.createElement('span');
-      totalEl.style.alignSelf = 'center';
-      totalEl.style.color = '#0f172a';
-      totalEl.style.fontWeight = '600';
-      totalEl.style.marginLeft = '6px';
-      countEl.parentNode.appendChild(totalEl);
+      if (!zone || !input) return;
 
-      let stream;
-      let cameraReady = false;
-      let capturedFiles = [];
+      let stream = null;
 
-      const updateCount = () => {
-        countEl.textContent = `${capturedFiles.length} / 5 captured`;
-        totalEl.textContent = `Total selected: ${capturedFiles.length} / 5`;
-        validateCount();
-      };
-
-      function validateCount() {
-        const err = document.getElementById('file-error');
-        const total = capturedFiles.length;
-        err.style.display = (total < 3 || total > 5) ? 'block' : 'none';
-        return !(total < 3 || total > 5);
+      function showPreview(file) {
+        if (!file || !file.type.startsWith('image/')) return;
+        if (previewImg.src) URL.revokeObjectURL(previewImg.src);
+        previewImg.src = URL.createObjectURL(file);
+        previewWrap.style.display = 'block';
+        submitBtn.disabled = false;
       }
 
-      captureBtn.disabled = true;
-
-      startBtn.addEventListener('click', async () => {
+      function setInputFile(file) {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-          camera.srcObject = stream;
-          await camera.play();
-          cameraReady = true;
-          captureBtn.disabled = false;
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          input.files = dt.files;
         } catch (e) {
-          alert('Cannot access camera: ' + e.message);
-          captureBtn.disabled = true;
+          input.files = null;
         }
-      });
-
-      captureBtn.addEventListener('click', () => {
-        if (!cameraReady || !camera.srcObject) {
-          alert('Start the camera and allow permission first.');
-          return;
-        }
-        if (capturedFiles.length >= 5) {
-          alert('You already have 5 images captured. Remove some to capture more.');
-          return;
-        }
-
-        const ctx = canvas.getContext('2d');
-        canvas.width = camera.videoWidth || 640;
-        canvas.height = camera.videoHeight || 480;
-        ctx.drawImage(camera, 0, 0, canvas.width, canvas.height);
-
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            alert('Could not capture frame. Try again after a second.');
-            return;
-          }
-          const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
-          capturedFiles.push(file);
-          renderPreviews();
-        }, 'image/jpeg', 0.9);
-      });
-
-      clearBtn.addEventListener('click', () => {
-        capturedFiles = [];
-        renderPreviews();
-      });
-
-      function renderPreviews() {
-        preview.innerHTML = '';
-        capturedFiles.forEach((file, idx) => {
-          const url = URL.createObjectURL(file);
-          const div = document.createElement('div');
-          div.className = 'thumb';
-          div.innerHTML =
-            `<img src="${url}" style="width:100%; border-radius:8px; object-fit:cover; max-height:160px;">` +
-            `<div style="margin-top:6px; display:flex; justify-content:space-between; align-items:center;">` +
-            `<span style="font-size:12px; color:#64748b;">Capture ${idx + 1}</span>` +
-            `<button type="button" class="btn btn-secondary btn-small">Remove</button>` +
-            `</div>`;
-          preview.appendChild(div);
-
-          div.querySelector('button').addEventListener('click', () => {
-            capturedFiles.splice(idx, 1);
-            renderPreviews();
-          });
-        });
-        updateCount();
+        showPreview(file);
       }
 
-      document.getElementById('enroll-form').addEventListener('submit', async (e) => {
+      function stopCamera() {
+        if (stream) {
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          stream = null;
+        }
+        if (cameraWrap) cameraWrap.classList.remove('active');
+        if (cameraVideo) cameraVideo.srcObject = null;
+        if (captureBtn) captureBtn.style.display = 'none';
+        if (stopCameraBtn) stopCameraBtn.style.display = 'none';
+      }
+
+      zone.addEventListener('click', function () { input.click(); });
+      zone.addEventListener('dragover', function (e) { e.preventDefault(); zone.classList.add('dragover'); });
+      zone.addEventListener('dragleave', function () { zone.classList.remove('dragover'); });
+      zone.addEventListener('drop', function (e) {
         e.preventDefault();
+        zone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (file) { setInputFile(file); stopCamera(); }
+      });
+      input.addEventListener('change', function () {
+        const file = this.files[0];
+        if (file) { showPreview(file); stopCamera(); }
+      });
 
-        if (!validateCount()) {
-          alert('Please capture between 3 and 5 images.');
-          return;
-        }
-
-        const submitBtn = document.querySelector('#enroll-form button[type="submit"]');
-        submitBtn.disabled = true;
-        submitBtn.textContent = 'Enrolling...';
-
-        const fd = new FormData();
-        fd.append('_token', document.querySelector('input[name="_token"]').value);
-        capturedFiles.forEach(f => fd.append('images[]', f));
-
+      takePictureBtn.addEventListener('click', async function () {
         try {
-          const resp = await fetch(e.target.action, {
-            method: 'POST',
-            body: fd,
-            credentials: 'same-origin',
-          });
-
-          if (resp.ok) {
-            window.location.reload();
-            return;
-          }
-
-          const text = (await resp.text() || '').trim();
-          alert(`Enrollment failed (HTTP ${resp.status}).\nCheck Network tab + laravel.log.\n\n${text.slice(0, 500)}`);
-
+          stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+          cameraVideo.srcObject = stream;
+          cameraWrap.classList.add('active');
+          captureBtn.style.display = 'inline-flex';
+          stopCameraBtn.style.display = 'inline-flex';
         } catch (err) {
-          alert('Network error: ' + err.message);
-        } finally {
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Enroll';
+          alert('Could not access camera: ' + (err.message || 'Permission denied'));
         }
       });
 
-      window.addEventListener('beforeunload', () => {
-        if (stream) stream.getTracks().forEach(t => t.stop());
+      captureBtn.addEventListener('click', function () {
+        if (!cameraVideo.srcObject || cameraVideo.readyState < 2) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = cameraVideo.videoWidth;
+        canvas.height = cameraVideo.videoHeight;
+        canvas.getContext('2d').drawImage(cameraVideo, 0, 0);
+        canvas.toBlob(function (blob) {
+          if (!blob) return;
+          const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
+          setInputFile(file);
+          stopCamera();
+        }, 'image/jpeg', 0.92);
       });
+
+      stopCameraBtn.addEventListener('click', stopCamera);
+      backToUpload.addEventListener('click', stopCamera);
+
+      window.addEventListener('beforeunload', stopCamera);
     })();
-</script>
+  </script>
 </body>
 </html>

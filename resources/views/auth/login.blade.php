@@ -59,7 +59,7 @@
 
     <div class="auth-footer">
         <div class="auth-inline-links">
-            <a href="{{ route('forgot') }}">Forgot password?</a>
+            <a href="{{ route('password.request') }}">Forgot password?</a>
             <a href="{{ route('register') }}">Create an account</a>
         </div>
     </div>

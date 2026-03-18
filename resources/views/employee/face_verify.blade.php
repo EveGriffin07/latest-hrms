@@ -25,13 +25,15 @@
     .stat .card { border:1px solid #e5e7eb; border-radius:10px; padding:12px; background:#fff; }
     .stat .card label { color:#6b7280; font-size:12px; text-transform:uppercase; letter-spacing:.02em; }
     .stat .card strong { color:#0f172a; font-size:15px; }
+    .card-link { text-decoration:none; color:inherit; display:block; }
+    .card-link:hover .card { box-shadow:0 10px 20px rgba(15,23,42,0.08); border-color:#bfdbfe; }
   </style>
 </head>
 <body>
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-      <span><i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name ?? 'Employee' }}</span>
+      <span><i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name ?? 'Employee' }}</a></span>
     </div>
   </header>
 
@@ -74,6 +76,26 @@
             </div>
           </div>
 
+          @php
+            $today = now()->toDateString();
+            $todayIn = $todayRecord?->clock_in_time ? \Carbon\Carbon::parse($todayRecord->clock_in_time)->format('H:i') : '—';
+            $todayOut = $todayRecord?->clock_out_time ? \Carbon\Carbon::parse($todayRecord->clock_out_time)->format('H:i') : '—';
+            $todayStatus = $todayRecord?->at_status ?? 'not set';
+          @endphp
+
+          <div class="stat" style="margin-top:8px;">
+            <a href="{{ route('employee.attendance.log') }}" class="card-link">
+              <div class="card">
+                <label>Today</label>
+                <strong>{{ ucfirst($todayStatus) }}</strong>
+                <div style="margin-top:6px; font-size:13px; color:#64748b;">
+                  <span style="display:inline-block; margin-right:8px;">In: <strong style="color:#0f172a;">{{ $todayIn }}</strong></span>
+                  <span>Out: <strong style="color:#0f172a;">{{ $todayOut }}</strong></span>
+                </div>
+              </div>
+            </a>
+          </div>
+
           <form id="face-verify-form" method="POST" enctype="multipart/form-data" action="{{ route('face.verify', $employee->employee_id) }}">
             @csrf
 
@@ -81,38 +103,18 @@
               <div class="camera-card">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
                   <span style="font-weight:600; color:#0f172a;">Live Camera</span>
-                  <button type="button" class="btn btn-secondary btn-small" id="start-camera" {{ $faceData ? '' : 'disabled' }}>
-                    <i class="fa-solid fa-camera"></i> Start
-                  </button>
                 </div>
                 <video id="camera-preview" autoplay playsinline muted></video>
                 <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
-                  <button type="button" class="btn btn-primary btn-small" id="capture-photo" {{ $faceData ? '' : 'disabled' }}>
-                    <i class="fa-solid fa-circle-dot"></i> Capture
+                  <button type="button" class="btn btn-primary btn-small" id="scan-face" {{ $faceData ? '' : 'disabled' }}>
+                    <i class="fa-solid fa-circle-dot"></i> Scan &amp; Verify
                   </button>
                 </div>
-                <small class="muted">Captured frame is submitted for verification.</small>
-              </div>
-              <div class="camera-card">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                  <span style="font-weight:600; color:#0f172a;">Snapshot</span>
-                  <button type="button" class="btn btn-secondary btn-small" id="clear-image" {{ $faceData ? '' : 'disabled' }}>
-                    <i class="fa-solid fa-rotate-left"></i> Clear
-                  </button>
-                </div>
-                <canvas id="snapshot" aria-label="Captured preview"></canvas>
-                <small class="muted" id="snapshot-status">No capture yet.</small>
+                <small class="muted" id="snapshot-status">Click \"Scan &amp; Verify\" and look at the camera.</small>
               </div>
             </div>
 
-            <div style="display:flex; gap:12px; margin-top:18px;">
-              <button type="submit" class="btn btn-primary" {{ $faceData ? '' : 'disabled' }}>
-                <i class="fa-solid fa-fingerprint"></i> Verify Face
-              </button>
-              <button type="reset" class="btn btn-secondary" id="reset-form" {{ $faceData ? '' : 'disabled' }}>
-                <i class="fa-solid fa-eraser"></i> Reset
-              </button>
-            </div>
+            <canvas id="snapshot" aria-label="Captured preview" style="display:none;"></canvas>
 
             <input type="file" id="verify-image" name="image" accept="image/*" capture="user" hidden>
           </form>
@@ -133,32 +135,31 @@
   <script>
     (function() {
       const fileInput = document.getElementById('verify-image');
-      const cameraBtn = document.getElementById('start-camera');
-      const captureBtn = document.getElementById('capture-photo');
-      const clearBtn = document.getElementById('clear-image');
-      const resetBtn = document.getElementById('reset-form');
+      const scanBtn = document.getElementById('scan-face');
+      const form = document.getElementById('face-verify-form');
       const video = document.getElementById('camera-preview');
       const canvas = document.getElementById('snapshot');
       const statusEl = document.getElementById('snapshot-status');
       let stream;
+      let isScanning = false;
+      let stopLoop = false;
 
       function setStatus(text) {
         if (statusEl) statusEl.textContent = text;
       }
 
-      cameraBtn?.addEventListener('click', async () => {
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
-          video.srcObject = stream;
-          setStatus('Camera ready.');
-        } catch (err) {
-          setStatus('Camera not available: ' + err.message);
+      function bindBlobToInput(blob) {
+        const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
+        const dataTransfer = new DataTransfer();
+        dataTransfer.items.add(file);
+        if (fileInput) {
+          fileInput.files = dataTransfer.files;
         }
-      });
+      }
 
-      captureBtn?.addEventListener('click', () => {
+      function captureFrame(callback) {
         if (!video.srcObject) {
-          setStatus('Start the camera first.');
+          setStatus('Camera is not ready yet.');
           return;
         }
         const ctx = canvas.getContext('2d');
@@ -167,29 +168,127 @@
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         canvas.toBlob((blob) => {
           if (!blob) return;
-          const file = new File([blob], 'capture.jpg', { type: 'image/jpeg' });
-          const dataTransfer = new DataTransfer();
-          dataTransfer.items.add(file);
-          if (fileInput) {
-            fileInput.files = dataTransfer.files;
-            setStatus('Snapshot captured and bound to the file input.');
+          bindBlobToInput(blob);
+          if (typeof callback === 'function') {
+            callback();
           }
-        }, 'image/jpeg');
-      });
+        }, 'image/jpeg', 0.85);
+      }
 
-      clearBtn?.addEventListener('click', () => {
-        canvas.width = canvas.height = 0;
-        fileInput && (fileInput.value = '');
-        setStatus('Snapshot cleared.');
-      });
+      async function startCameraIfNeeded() {
+        if (stream || !video) return;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480, facingMode: 'user' }
+          });
+          video.srcObject = stream;
+          setStatus('Camera ready.');
+        } catch (err) {
+          setStatus('Camera not available: ' + (err?.message || 'Permission denied'));
+        }
+      }
 
-      resetBtn?.addEventListener('click', () => {
-        setStatus('No capture yet.');
-        canvas.width = canvas.height = 0;
-        fileInput && (fileInput.value = '');
+      async function verifyOnce() {
+        return new Promise((resolve) => {
+          // Capture 3 quick frames and let the API pick best score.
+          const blobs = [];
+          const captureN = (n, delayMs) => new Promise((res) => {
+            const take = () => {
+              if (!video.srcObject) return res();
+              const ctx = canvas.getContext('2d');
+              canvas.width = video.videoWidth || 640;
+              canvas.height = video.videoHeight || 480;
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+              canvas.toBlob((blob) => {
+                if (blob) blobs.push(blob);
+                if (blobs.length >= n) return res();
+                setTimeout(take, delayMs);
+              }, 'image/jpeg', 0.85);
+            };
+            take();
+          });
+
+          captureN(3, 120).then(async () => {
+            try {
+              const tokenEl = form?.querySelector('input[name=\"_token\"]');
+              const token = tokenEl ? tokenEl.value : '';
+              const fd = new FormData();
+              if (token) fd.append('_token', token);
+              blobs.forEach((b, idx) => fd.append('images[]', new File([b], `frame_${idx}.jpg`, { type: 'image/jpeg' })));
+              const resp = await fetch(form.action, {
+                method: 'POST',
+                headers: {
+                  'Accept': 'application/json',
+                  'X-Requested-With': 'XMLHttpRequest',
+                },
+                body: fd,
+                credentials: 'same-origin',
+              });
+              const json = await resp.json().catch(() => null);
+              if (!resp.ok || !json) {
+                resolve({ ok: false, message: (json && json.message) ? json.message : 'Verification failed.' });
+                return;
+              }
+              resolve(json);
+            } catch (e) {
+              resolve({ ok: false, message: e?.message || 'Network error.' });
+            }
+          });
+        });
+      }
+
+      scanBtn?.addEventListener('click', async () => {
+        if (isScanning) return;
+        isScanning = true;
+        stopLoop = false;
+        try {
+          scanBtn.disabled = true;
+          scanBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Scanning…';
+
+          await startCameraIfNeeded();
+          if (!stream) return;
+
+          // Continuous scan loop until success (or max attempts).
+          const maxAttempts = 20;
+          let attempt = 0;
+
+          setStatus('Scanning… keep your face centered.');
+          while (!stopLoop && attempt < maxAttempts) {
+            attempt++;
+            const res = await verifyOnce();
+            if (!res.ok) {
+              const fr = res.failure_reason ? ` [${res.failure_reason}]` : '';
+              setStatus((res.message || 'Verification failed.') + fr + ` (try ${attempt}/${maxAttempts})`);
+            } else if (res.matched) {
+              setStatus('Match! Score: ' + (res.score !== null && res.score !== undefined ? Number(res.score).toFixed(4) : 'N/A'));
+              stopLoop = true;
+              // Reload so today's attendance card reflects the new clock-in/out
+              setTimeout(() => { window.location.reload(); }, 800);
+              break;
+            } else {
+              const scoreText = (res.score !== null && res.score !== undefined) ? Number(res.score).toFixed(4) : 'N/A';
+              setStatus('No match (score ' + scoreText + '). Retrying… (' + attempt + '/' + maxAttempts + ')');
+            }
+            // small delay between attempts
+            await new Promise(r => setTimeout(r, 900));
+          }
+
+          if (!stopLoop) {
+            setStatus('Stopped. No match after ' + maxAttempts + ' tries. Improve lighting and try again.');
+          }
+        } catch (err) {
+          setStatus('Scan failed: ' + (err?.message || 'unknown error'));
+        } finally {
+          isScanning = false;
+          if (scanBtn) {
+            scanBtn.disabled = false;
+            scanBtn.innerHTML = '<i class="fa-solid fa-circle-dot"></i> Scan &amp; Verify';
+          }
+        }
       });
 
       window.addEventListener('beforeunload', () => {
+        stopLoop = true;
         if (stream) {
           stream.getTracks().forEach(t => t.stop());
         }

@@ -10,6 +10,7 @@ use App\Models\PayrollPeriod;
 use App\Services\OtClaimApproverResolver;
 use App\Services\OtClaimAudit;
 use App\Services\OtClaimNotifier;
+use App\Services\OvertimeDayService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -23,7 +24,7 @@ class EmployeeOvertimeClaimController extends Controller
     {
         $employee = $this->currentEmployee();
         $claims = OvertimeClaim::where('employee_id', $employee->employee_id)
-            ->with('period')
+            ->with(['period', 'employee'])
             ->orderByDesc('date')
             ->orderByDesc('id')
             ->get();
@@ -43,6 +44,53 @@ class EmployeeOvertimeClaimController extends Controller
             'supervisorName' => $supervisorName,
             'departmentName' => $departmentName,
             'hasSupervisor' => $hasSupervisor,
+        ]);
+    }
+
+    /** AJAX: get day type, suggested rate and official clock-out for a given date. */
+    public function dayInfo(Request $request)
+    {
+        $employee = $this->currentEmployee();
+        $request->validate([
+            'date' => ['required', 'date', 'before_or_equal:today'],
+            'ot_mode' => ['nullable', 'in:NORMAL,HOLIDAY_REST'],
+        ]);
+        $date = Carbon::parse($request->input('date'))->startOfDay();
+        $otMode = $request->input('ot_mode', 'NORMAL');
+
+        $dayType = OvertimeDayService::getDayType($employee->employee_id, $date);
+        $dayTypeLabel = OvertimeDayService::labelForDayType($dayType);
+        $rate = OvertimeDayService::getRateForDayType($dayType);
+        $officialClockOutMinutes = OvertimeDayService::getOfficialClockOutMinutes($employee->employee_id, $date);
+
+        // Attendance clock-out (reference only)
+        $attendance = Attendance::where('employee_id', $employee->employee_id)
+            ->whereDate('date', $date->toDateString())
+            ->first();
+        $attendanceClockOutMinutes = null;
+        $attendanceClockOutLabel = null;
+        if ($attendance && $attendance->clock_out_time) {
+            $att = Carbon::parse($attendance->clock_out_time);
+            $attendanceClockOutMinutes = $att->hour * 60 + $att->minute;
+            $attendanceClockOutLabel = $att->format('H:i');
+        }
+
+        $validationMessage = 'OK';
+        if ($otMode === 'NORMAL' && $dayType !== OvertimeDayService::TYPE_NORMAL) {
+            $validationMessage = 'Selected mode is Normal OT but this date is ' . strtolower($dayTypeLabel) . '.';
+        } elseif ($otMode === 'HOLIDAY_REST' && $dayType === OvertimeDayService::TYPE_NORMAL) {
+            $validationMessage = 'Selected mode is Public Holiday / Rest Day OT but this date is a normal working day.';
+        }
+
+        return response()->json([
+            'day_type' => $dayType,
+            'day_type_label' => $dayTypeLabel,
+            'rate_value' => $rate,
+            'rate_label' => $rate . 'x',
+            'official_clock_out_minutes' => $officialClockOutMinutes,
+            'attendance_clock_out_minutes' => $attendanceClockOutMinutes,
+            'attendance_clock_out_label' => $attendanceClockOutLabel,
+            'validation_message' => $validationMessage,
         ]);
     }
 
@@ -94,6 +142,7 @@ class EmployeeOvertimeClaimController extends Controller
             'end_time' => ['required', 'date_format:H:i'],
             'break_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
             'rate_type' => ['nullable', 'numeric', 'min:1', 'max:3'],
+            'ot_mode' => ['required', 'in:NORMAL,HOLIDAY_REST'],
             'reason' => ['required', 'string', 'min:10', 'max:500'],
             'supporting_info' => ['nullable', 'string', 'max:1000'],
             'submit_now' => ['nullable', 'boolean'],
@@ -106,10 +155,13 @@ class EmployeeOvertimeClaimController extends Controller
         ];
         $validated = $request->validate($rules);
 
-        $validated['hours'] = $this->computeHoursFromTimes(
+        $validated['hours'] = $this->computeClaimHours(
+            $employee->employee_id,
+            $validated['date'],
             $validated['start_time'],
             $validated['end_time'],
-            (int) ($validated['break_minutes'] ?? 0)
+            (int) ($validated['break_minutes'] ?? 0),
+            $validated['ot_mode']
         );
         if ($validated['hours'] < 0.25) {
             throw ValidationException::withMessages(['end_time' => 'Total hours after break deduction must be at least 0.25.']);
@@ -128,7 +180,7 @@ class EmployeeOvertimeClaimController extends Controller
 
         $proofPath = $this->storeProofImage($request);
         $attachmentPath = $this->storeAttachment($request);
-        $noProofFlag = in_array($validated['location_type'], [OvertimeClaim::LOCATION_OUTSIDE, OvertimeClaim::LOCATION_CLIENT_SITE, OvertimeClaim::LOCATION_OTHER], true) && !$proofPath && !empty(trim($validated['missing_proof_reason'] ?? ''));
+        $noProofFlag = false;
 
         $status = $submitNow ? OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR : OvertimeClaim::STATUS_DRAFT;
         $routingAreaId = isset($validated['route_to_area_id']) ? (int) $validated['route_to_area_id'] : null;
@@ -147,7 +199,7 @@ class EmployeeOvertimeClaimController extends Controller
                 'end_time' => $validated['end_time'],
                 'break_minutes' => (int) ($validated['break_minutes'] ?? 0),
                 'hours' => $validated['hours'],
-                'rate_type' => $validated['rate_type'] ?? 1.5,
+                'rate_type' => $validated['rate_type'] ?? 1.0,
                 'reason' => $validated['reason'],
                 'supporting_info' => $validated['supporting_info'] ?? null,
                 'attachment_path' => $attachmentPath,
@@ -184,6 +236,36 @@ class EmployeeOvertimeClaimController extends Controller
         $totalMin = max(0, $s->diffInMinutes($e) - $breakMinutes);
         $hours = $totalMin / 60;
         return round($hours * 2) / 2; // nearest 0.5
+    }
+
+    /**
+     * Compute claim hours using day type rules.
+     * - Normal OT: only time after official clock-out is counted.
+     * - Public Holiday / Rest Day OT: full selected time minus break.
+     */
+    private function computeClaimHours(int $employeeId, string $date, string $start, string $end, int $breakMinutes, string $otMode): float
+    {
+        $baseDate = Carbon::parse($date)->startOfDay();
+        $s = Carbon::createFromFormat('H:i', $start);
+        $e = Carbon::createFromFormat('H:i', $end);
+        if ($e <= $s) {
+            $e->addDay();
+        }
+
+        $startMinutes = $s->hour * 60 + $s->minute;
+        $endMinutes = $startMinutes + $s->diffInMinutes($e);
+
+        $effectiveStartMinutes = $startMinutes;
+        if ($otMode === 'NORMAL') {
+            $officialClockOutMinutes = OvertimeDayService::getOfficialClockOutMinutes($employeeId, $baseDate);
+            if ($officialClockOutMinutes !== null) {
+                $effectiveStartMinutes = max($effectiveStartMinutes, $officialClockOutMinutes);
+            }
+        }
+
+        $totalMinutes = max(0, $endMinutes - $effectiveStartMinutes - $breakMinutes);
+        $hours = $totalMinutes / 60;
+        return round($hours * 2) / 2;
     }
 
     private function storeAttachment(Request $request, ?string $existingPath = null): ?string
@@ -232,6 +314,7 @@ class EmployeeOvertimeClaimController extends Controller
             'end_time' => ['required', 'date_format:H:i'],
             'break_minutes' => ['nullable', 'integer', 'min:0', 'max:240'],
             'rate_type' => ['nullable', 'numeric', 'min:1', 'max:3'],
+            'ot_mode' => ['required', 'in:NORMAL,HOLIDAY_REST'],
             'reason' => ['required', 'string', 'min:10', 'max:500'],
             'supporting_info' => ['nullable', 'string', 'max:1000'],
             'submit_now' => ['nullable', 'boolean'],
@@ -244,10 +327,13 @@ class EmployeeOvertimeClaimController extends Controller
         ];
         $validated = $request->validate($rules);
 
-        $validated['hours'] = $this->computeHoursFromTimes(
+        $validated['hours'] = $this->computeClaimHours(
+            $employee->employee_id,
+            $validated['date'],
             $validated['start_time'],
             $validated['end_time'],
-            (int) ($validated['break_minutes'] ?? 0)
+            (int) ($validated['break_minutes'] ?? 0),
+            $validated['ot_mode']
         );
         if ($validated['hours'] < 0.25) {
             throw ValidationException::withMessages(['end_time' => 'Total hours after break deduction must be at least 0.25.']);
@@ -266,7 +352,7 @@ class EmployeeOvertimeClaimController extends Controller
 
         $proofPath = $this->storeProofImage($request, $claim->proof_image_path);
         $attachmentPath = $this->storeAttachment($request, $claim->attachment_path);
-        $noProofFlag = in_array($validated['location_type'], [OvertimeClaim::LOCATION_OUTSIDE, OvertimeClaim::LOCATION_CLIENT_SITE, OvertimeClaim::LOCATION_OTHER], true) && !$proofPath && !empty(trim($validated['missing_proof_reason'] ?? ''));
+        $noProofFlag = false;
 
         $newStatus = $submitNow ? OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR : $claim->status;
         $beforeStatus = $claim->status;
@@ -285,7 +371,7 @@ class EmployeeOvertimeClaimController extends Controller
                 'end_time' => $validated['end_time'],
                 'break_minutes' => (int) ($validated['break_minutes'] ?? 0),
                 'hours' => $validated['hours'],
-                'rate_type' => $validated['rate_type'] ?? 1.5,
+                'rate_type' => $validated['rate_type'] ?? 1.0,
                 'reason' => $validated['reason'],
                 'supporting_info' => $validated['supporting_info'] ?? null,
                 'attachment_path' => $attachmentPath ?? $claim->attachment_path,
@@ -350,40 +436,16 @@ class EmployeeOvertimeClaimController extends Controller
         // Optional: check overlap with another approved claim (same date, overlapping hours). Simplified: duplicate date check above is enough.
     }
 
-    /** Validate INSIDE/REMOTE_WFH (OT end <= clock_out for INSIDE); OUTSIDE/CLIENT_SITE/OTHER (proof or reason). */
+    /** Validate location and proof; attendance clock-out is informational only (no hard block). */
     private function validateLocationAndProof(Request $request, array $validated, int $employeeId, ?OvertimeClaim $claim): void
     {
         $locationType = $validated['location_type'] ?? OvertimeClaim::LOCATION_INSIDE;
 
         if (in_array($locationType, [OvertimeClaim::LOCATION_INSIDE, OvertimeClaim::LOCATION_REMOTE_WFH], true)) {
-            $endTime = $validated['end_time'] ?? null;
-            if ($endTime) {
-                $attendance = Attendance::where('employee_id', $employeeId)
-                    ->whereDate('date', $validated['date'])
-                    ->first();
-                if (!$attendance) {
-                    throw ValidationException::withMessages(['end_time' => 'No attendance record for this date. Cannot verify OT end time.']);
-                }
-                $clockOut = $attendance->clock_out_time ? \Carbon\Carbon::parse($attendance->clock_out_time)->format('H:i') : null;
-                if (!$clockOut) {
-                    throw ValidationException::withMessages(['end_time' => 'No clock-out time for this date. Cannot verify OT.']);
-                }
-                if (strtotime($endTime) > strtotime($clockOut)) {
-                    throw ValidationException::withMessages(['end_time' => 'OT exceeds clock-out time.']);
-                }
-            }
             return;
         }
 
-        // OUTSIDE: require either proof image or missing_proof_reason
-        $hasProof = $request->hasFile('proof_image') || ($claim && $claim->proof_image_path);
-        $hasReason = !empty(trim($validated['missing_proof_reason'] ?? ''));
-        if (!$hasProof && !$hasReason) {
-            throw ValidationException::withMessages([
-                'proof_image' => 'For outside OT, upload proof image or provide reason for missing proof.',
-                'missing_proof_reason' => 'For outside OT, upload proof image or provide reason for missing proof.',
-            ]);
-        }
+        // OUTSIDE / CLIENT_SITE / OTHER: no extra validation now; main Reason field is required already.
     }
 
     /** Store proof image; return path or null. Keeps existing path if no new file. */

@@ -72,10 +72,25 @@ class EmployeeAttendanceController extends Controller
             } else {
                 // Step 2: attendance rules on working days
                 if (! $in) {
-                    if ($todayIsCurrent && $now->lt($absentMarkTime)) {
-                        $status = 'pending';
-                        $reason = 'No check-in yet';
+                    $lateAfter = $workStart->copy()->addMinutes($graceMinutes);
+                    if ($todayIsCurrent) {
+                        if ($now->lte($lateAfter)) {
+                            // Before or at 09:10 – still on time window
+                            $status = 'pending';
+                            $reason = 'No check-in yet';
+                        } elseif ($now->lt($absentMarkTime)) {
+                            // After 09:10 but before absent cutoff → treat as late (no check-in yet)
+                            $status = 'late';
+                            $reason = 'No check-in yet (late)';
+                            $lateCount++;
+                        } else {
+                            // After cutoff (e.g. 11:00) with no check-in → absent
+                            $status = 'absent';
+                            $reason = 'No check-in';
+                            $absentCount++;
+                        }
                     } else {
+                        // Past days with no check-in are absences
                         $status = 'absent';
                         $reason = 'No check-in';
                         $absentCount++;

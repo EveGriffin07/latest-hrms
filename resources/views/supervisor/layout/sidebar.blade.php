@@ -108,19 +108,28 @@
     </a>
   </div>
 
-  {{-- PERFORMANCE --}}
+  {{-- ==========================================
+       PERFORMANCE APPRAISALS
+       ========================================== --}}
+       
+  {{-- 1. Personal Appraisals (Self-Evaluations) --}}
   <div class="sidebar-group">
-    <a href="#" class="sidebar-toggle">
+    <a href="{{ route('employee.kpis.self-eval') }}" class="sidebar-toggle sidebar-quick-link">
       <div class="left">
-        <i class="fa-solid fa-chart-line"></i>
-        <span>Performance</span>
+        <i class="fa-solid fa-star-half-stroke"></i>
+        <span>My Appraisals</span>
       </div>
-      <i class="fa-solid fa-chevron-right arrow"></i>
     </a>
-    <ul class="submenu">
-      <li><a href="{{ route('employee.kpis') }}">My KPIs</a></li>
-      <li><a href="{{ route('employee.kpis.self-eval') }}">Self Evaluation</a></li>
-    </ul>
+  </div>
+
+  {{-- 2. Supervisor Inbox (Grading Team Appraisals) --}}
+  <div class="sidebar-group">
+    <a href="{{ route('supervisor.appraisal.inbox') }}" class="sidebar-toggle sidebar-quick-link">
+      <div class="left">
+        <i class="fa-solid fa-clipboard-user" style="color: #2563eb;"></i>
+        <span style="font-weight: 600; color: #0f172a;">Team Appraisals</span>
+      </div>
+    </a>
   </div>
 
   <div class="sidebar-divider"></div>

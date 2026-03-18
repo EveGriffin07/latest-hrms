@@ -32,7 +32,7 @@
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-      <span><i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name ?? 'Employee' }}</span>
+      <span><i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name ?? 'Employee' }}</a></span>
     </div>
   </header>
 
@@ -42,25 +42,34 @@
     <main>
       <div class="breadcrumb">Attendance · My Log & Overtime</div>
       <h2>My Attendance</h2>
-      <p class="subtitle">Quick view of today’s status, this week’s summary, and recent logs.</p>
+      <p class="subtitle">Quick view of today’s status, the last 30 days, and recent logs.</p>
+
+      @php
+        $todayIn = $todayRecord?->clock_in_time ? \Carbon\Carbon::parse($todayRecord->clock_in_time)->format('H:i') : '—';
+        $todayOut = $todayRecord?->clock_out_time ? \Carbon\Carbon::parse($todayRecord->clock_out_time)->format('H:i') : '—';
+        $todayStatusLabel = ucfirst($todayStatus ?? 'absent');
+      @endphp
 
       <div class="card-grid">
         <div class="card">
           <div class="label">Today</div>
-          <div class="value">Present</div>
-          <div class="chips"><span class="chip">In: 09:05</span><span class="chip">Out: 18:05</span></div>
+          <div class="value">{{ $todayStatusLabel }}</div>
+          <div class="chips">
+            <span class="chip">In: {{ $todayIn }}</span>
+            <span class="chip">Out: {{ $todayOut }}</span>
+          </div>
         </div>
         <div class="card">
           <div class="label">Late Arrivals (30d)</div>
-          <div class="value">2</div>
+          <div class="value">{{ $lateCount }}</div>
         </div>
         <div class="card">
           <div class="label">Overtime Hours (30d)</div>
-          <div class="value">6.5h</div>
+          <div class="value">{{ number_format($overtimeHours, 1) }}h</div>
         </div>
         <div class="card">
           <div class="label">Absences (30d)</div>
-          <div class="value">0</div>
+          <div class="value">{{ $absentCount }}</div>
         </div>
       </div>
 
@@ -74,33 +83,53 @@
                 <th>In</th>
                 <th>Out</th>
                 <th>Status</th>
-                <th>Overtime</th>
+                <th>Reason</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td>2026-02-11</td><td>09:05</td><td>18:05</td><td><span class="status present">Present</span></td><td>1h</td>
-              </tr>
-              <tr>
-                <td>2026-02-10</td><td>09:12</td><td>18:00</td><td><span class="status late">Late</span></td><td>0h</td>
-              </tr>
-              <tr>
-                <td>2026-02-09</td><td>09:00</td><td>18:30</td><td><span class="status present">Present</span></td><td>1.5h</td>
-              </tr>
+              @forelse($recentAttendance as $row)
+                <tr>
+                  <td>{{ $row['date'] }}</td>
+                  <td>{{ $row['in'] ? \Carbon\Carbon::parse($row['in'])->format('H:i') : '—' }}</td>
+                  <td>{{ $row['out'] ? \Carbon\Carbon::parse($row['out'])->format('H:i') : '—' }}</td>
+                  <td>
+                    @php $s = $row['status']; @endphp
+                    <span class="status {{ $s === 'present' ? 'present' : ($s === 'late' ? 'late' : ($s === 'absent' ? 'absent' : '')) }}">
+                      {{ ucfirst($s) }}
+                    </span>
+                  </td>
+                  <td>{{ $row['reason'] ?? '—' }}</td>
+                </tr>
+              @empty
+                <tr><td colspan="5">No attendance data yet.</td></tr>
+              @endforelse
             </tbody>
           </table>
         </div>
       </div>
 
       <div class="card">
-        <div class="label" style="margin-bottom:8px;">Overtime Requests (sample)</div>
+        <div class="label" style="margin-bottom:8px;">Overtime Requests</div>
         <table>
           <thead>
             <tr><th>Date</th><th>Hours</th><th>Status</th><th>Note</th></tr>
           </thead>
           <tbody>
-            <tr><td>2026-02-05</td><td>2.0</td><td><span class="status present">Approved</span></td><td>Project release</td></tr>
-            <tr><td>2026-01-29</td><td>1.5</td><td><span class="status late">Pending</span></td><td>Client call</td></tr>
+            @forelse($recentOvertime as $ot)
+              <tr>
+                <td>{{ $ot->date?->format('Y-m-d') }}</td>
+                <td>{{ number_format($ot->hours, 1) }}</td>
+                <td>
+                  @php $st = strtolower($ot->ot_status ?? ''); @endphp
+                  <span class="status {{ $st === 'approved' ? 'present' : ($st === 'pending' ? 'late' : 'absent') }}">
+                    {{ ucfirst($ot->ot_status) }}
+                  </span>
+                </td>
+                <td>{{ $ot->reason ?? '—' }}</td>
+              </tr>
+            @empty
+              <tr><td colspan="4">No overtime records yet.</td></tr>
+            @endforelse
           </tbody>
         </table>
       </div>

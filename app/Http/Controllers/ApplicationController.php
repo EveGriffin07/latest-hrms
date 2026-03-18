@@ -7,134 +7,114 @@ use Illuminate\Support\Facades\Auth;
 use App\Models\Application;
 use App\Models\JobPost;
 use App\Models\ApplicantProfile;
-use App\Models\Employee;
-use App\Models\Department;
-use App\Models\Position;
-use App\Models\User;
-use App\Models\Onboarding;
-use App\Models\OnboardingTask;
 
 class ApplicationController extends Controller
 {
     // 1. List all Applicants
-    public function index()
+    public function index(Request $request)
     {
-        $applications = Application::with(['job', 'applicant'])->latest()->get();
-        return view('admin.recruitment_applicants', compact('applications'));
-    }
+        $query = Application::with(['applicant.user', 'job'])->latest();
 
+        $selectedJob = null;
+        if ($request->has('job_id')) {
+            $query->where('job_id', $request->job_id);
+            $selectedJob = JobPost::find($request->job_id); 
+        }
+
+        $applications = $query->get();
+
+        // Make sure it points to your correct admin view
+        return view('admin.recruitment_applicants', compact('applications', 'selectedJob'));
+    }
+    
     // 2. Show Specific Applicant Details
     public function show($id)
     {
-        $application = Application::with(['job', 'applicant'])->findOrFail($id);
+        // Added the extra relationships so the Admin's view can see the dynamic cards
+        $application = Application::with([
+            'job', 
+            'applicant.user',
+            'applicant.experiences',
+            'applicant.educations',
+            'applicant.skills',
+            'applicant.languages'
+        ])->findOrFail($id);
+
+        // ========================================================
+        // 🔥 THE MAGIC TRICK: SILENT STATUS UPDATE (Read Receipt)
+        // ========================================================
+        // If this is the FIRST time HR is opening this application, 
+        // automatically move it to the "Reviewing" stage!
+        if ($application->app_stage === 'Applied') {
+            $application->app_stage = 'Reviewing';
+            $application->save();
+        }
+        // ========================================================
+
         return view('admin.applicants_show', compact('application'));
     }
 
-    // 3. Update Status (Auto-Hire & Auto-Onboarding Logic Included)
+    // 3. Update Status
     public function updateStatus(Request $request, $id)
     {
-        // Fetch application with job and applicant details
-        $application = Application::with(['job', 'applicant.user'])->findOrFail($id);
+        $application = Application::findOrFail($id);
 
-        // ======================================================
-        // AUTOMATIC HIRING + ONBOARDING LOGIC
-        // ======================================================
-        if ($request->status === 'Hired') {
-
-            $user = $application->applicant->user;
-
-            // Check if already exists to prevent duplicate employees
-            $exists = Employee::where('user_id', $user->user_id)->exists();
-
-            if (!$exists) {
-                // 1. Resolve Department (Find or Create)
-                $department = Department::firstOrCreate(
-                    ['department_name' => $application->job->department],
-                    ['created_at' => now(), 'updated_at' => now()]
-                );
-
-                // 2. Resolve Position (Find or Create) and link to department
-                $position = Position::firstOrCreate(
-                    ['position_name' => $application->job->job_title],
-                    [
-                        'department_id' => $department->department_id,
-                        'created_at' => now(),
-                        'updated_at' => now()
-                    ]
-                );
-
-                // 3. Generate Employee Code (e.g., EMP-XXXXXX)
-                $empCode = 'EMP-' . strtoupper(uniqid());
-
-                // 4. Create Employee Record
-                $newEmployee = Employee::create([
-                    'user_id'         => $user->user_id,
-                    'department_id'   => $department->department_id,
-                    'position_id'     => $position->position_id,
-                    'employee_code'   => $empCode,
-                    'employee_status' => 'active',
-                    'hire_date'       => now(),
-                    'base_salary'     => 0.00,
-                    'phone'           => $application->applicant->phone,
-                    'address'         => $application->applicant->location ?? 'Not Provided',
-                ]);
-
-                // 5. Update User Role to Employee
-                $user->role = 'employee';
-                $user->save();
-
-                // ======================================================
-                // AUTOMATIC ONBOARDING GENERATION
-                // ======================================================
-
-                // A. Create the Main Onboarding Record
-                $onboarding = Onboarding::create([
-                    'employee_id' => $newEmployee->employee_id,
-                    'assigned_by' => Auth::id(), // admin who clicked 'Hire'
-                    'start_date'  => now(),
-                    'end_date'    => now()->addDays(7),
-                    'status'      => 'Pending'
-                ]);
-
-                // B. Define Standard Default Tasks
-                $defaultTasks = [
-                    ['name' => 'Submit Identity Documents',   'cat' => 'HR Docs'],
-                    ['name' => 'Sign Employment Contract',    'cat' => 'Legal'],
-                    ['name' => 'Setup Corporate Email',       'cat' => 'IT Setup'],
-                    ['name' => 'Attend Company Orientation',  'cat' => 'Training'],
-                    ['name' => 'Meet Reporting Manager',      'cat' => 'Integration'],
-                ];
-
-                // C. Create Tasks in DB
-                foreach ($defaultTasks as $task) {
-                    OnboardingTask::create([
-                        'onboarding_id' => $onboarding->onboarding_id,
-                        'task_name'     => $task['name'],
-                        'category'      => $task['cat'],
-                        'is_completed'  => false,
-                        'due_date'      => now()->addDays(5),
-                    ]);
-                }
-            }
-        }
-
-        // ======================================================
-        // STANDARD STATUS UPDATE
-        // ======================================================
+        // Just update the status to whatever HR selected
         $application->app_stage = $request->status;
         $application->save();
 
         $message = ($request->status === 'Hired')
-            ? 'Candidate Hired! Employee profile created and Onboarding Checklist generated.'
+            ? 'Candidate marked as Hired! The Employee Management module can now convert them to an official employee.'
             : 'Applicant status updated successfully!';
 
         return redirect()->back()->with('success', $message);
+    }
+
+    // 3.5 Schedule Interview
+    public function scheduleInterview(Request $request, $id)
+    {
+        // STRICT VALIDATION: 'after:now' ensures the time is in the future
+        $request->validate([
+            'interview_datetime' => 'required|date|after:now',
+            'interview_location' => 'required|string|max:255',
+        ], [
+            'interview_datetime.after' => 'Error: The interview must be scheduled for a future date and time.',
+        ]);
+
+        $application = Application::findOrFail($id);
+        
+        $application->app_stage = 'Interview'; 
+        $application->interview_datetime = $request->interview_datetime;
+        $application->interview_location = $request->interview_location;
+        $application->save();
+
+        return redirect()->back()->with('success', 'Interview successfully scheduled! The applicant can now see these details on their dashboard.');
     }
 
     // 4. Save Evaluation Scores
     public function saveEvaluation(Request $request, $id)
     {
         $application = Application::findOrFail($id);
+
+        // Security Check: Prevent evaluation if no interview has been scheduled
+        if (is_null($application->interview_datetime)) {
+            return redirect()->back()->withErrors(['error' => 'You cannot evaluate a candidate before scheduling an interview!']);
+        }
+
+        // === NEW: STRICT EVALUATION VALIDATION ===
+        $request->validate([
+            'test_score'      => 'required|numeric|min:0|max:100',
+            'interview_score' => 'required|numeric|min:0|max:100',
+            'notes'           => 'required|string|min:10', // Forces HR to write at least a brief sentence
+        ], [
+            'test_score.required'      => 'Error: You must provide a Technical/Test score.',
+            'test_score.max'           => 'Error: The Test score cannot exceed 100.',
+            'interview_score.required' => 'Error: You must provide an Interview score.',
+            'interview_score.max'      => 'Error: The Interview score cannot exceed 100.',
+            'notes.required'           => 'Error: HR Notes are required to justify these scores.',
+            'notes.min'                => 'Error: HR Notes must be at least 10 characters long.',
+        ]);
+        // ==========================================
 
         $overall = ($request->test_score + $request->interview_score) / 2;
 

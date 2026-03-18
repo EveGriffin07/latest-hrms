@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Employee Dashboard - HRMS</title>
+  @php $dashboardLabel = (auth()->user()->role ?? '') === 'supervisor' ? 'Supervisor Dashboard' : 'Employee Dashboard'; @endphp
+  <title>{{ $dashboardLabel }} - HRMS</title>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" />
   <link rel="stylesheet" href="{{ asset('css/hrms-theme.css') }}">
@@ -266,7 +267,7 @@
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-        <i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name }}
+        <i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name }}</a>
     </div>
   </header>
 
@@ -277,8 +278,8 @@
     <main class="dashboard-main">
       <div class="hero">
         <div>
-          <div class="breadcrumb">Home > Employee Dashboard</div>
-          <div class="hero-title">Employee Dashboard</div>
+          <div class="breadcrumb">Home > {{ $dashboardLabel }}</div>
+          <div class="hero-title">{{ $dashboardLabel }}</div>
           <div class="hero-subtitle">Personal overview of attendance, leave, payslips, training, and announcements.</div>
         </div>
         <div class="hero-actions">
@@ -345,7 +346,105 @@
             </div>
           </div>
         </article>
+
+        @if(isset($teamLeavePendingCount) && (Auth::user()->role ?? '') === 'supervisor')
+        <article class="kpi-card leave" style="cursor:pointer;" onclick="window.location.href='{{ route('supervisor.leave.inbox') }}'">
+          <div class="kpi-icon"><i class="fa-solid fa-calendar-check"></i></div>
+          <div>
+            <div class="kpi-label">Team Leave</div>
+            <div class="kpi-value">{{ $teamLeavePendingCount ?? 0 }} pending</div>
+            <div class="kpi-meta meta-green">
+                <i class="fa-solid fa-inbox"></i> {{ $teamLeaveApprovedCount ?? 0 }} approved, ready to upload
+            </div>
+          </div>
+        </article>
+        @endif
       </section>
+
+      {{-- === CONDITIONAL MANAGER SELF-SERVICE (MSS) === --}}
+      @if(Auth::check() && Auth::user()->employee && Auth::user()->employee->position && Auth::user()->employee->position->is_manager)
+      <section class="manager-panel">
+          <header style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div style="display:flex; align-items:center; gap:10px; font-weight:700; color:#0f172a; font-size:18px;">
+                  <i class="fa-solid fa-user-tie" style="color:#8b5cf6;"></i> Manager Self-Service (MSS)
+              </div>
+          </header>
+          <p style="font-size: 13px; color: #64748b; margin-top: 0; margin-bottom: 20px;">Manage your department: request new team members, approve team leaves, and review KPIs.</p>
+          
+          <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              {{-- Open Requisition Modal --}}
+              <button onclick="document.getElementById('requisitionModal').classList.add('active')" class="pill-btn" style="background: linear-gradient(135deg, #8b5cf6, #6d28d9); box-shadow: 0 10px 20px rgba(139, 92, 246, 0.25);">
+                  <i class="fa-solid fa-user-plus"></i> Request New Hire
+              </button>
+
+              {{-- NEW: Team Onboarding Button --}}
+              <a href="{{ route('manager.onboarding.team') }}" class="pill-btn" style="background: #fff; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.05); text-decoration: none;">
+                  <i class="fa-solid fa-list-check" style="color: #3b82f6;"></i> Manage Team Onboarding
+              </a>
+              
+              @if(strtolower(Auth::user()->role ?? '') === 'supervisor')
+              <a href="{{ route('supervisor.leave.inbox') }}" class="pill-btn" style="background: #fff; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.05); text-decoration: none;">
+                  <i class="fa-solid fa-calendar-check" style="color: #10b981;"></i> Approve Team Leave
+              </a>
+              @else
+              <button class="pill-btn" style="background: #fff; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                  <i class="fa-solid fa-calendar-check" style="color: #10b981;"></i> Approve Team Leave
+              </button>
+              @endif
+              <button class="pill-btn" style="background: #fff; color: #0f172a; border: 1px solid #cbd5e1; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                  <i class="fa-solid fa-chart-line" style="color: #f59e0b;"></i> Review Team KPIs
+              </button>
+          </div>
+      </section>
+
+      {{-- JOB REQUISITION MODAL --}}
+      <div id="requisitionModal" class="modal-overlay">
+          <div class="modal-card">
+              <div class="modal-header">
+                  <span class="modal-title">Submit Hiring Request</span>
+                  <button class="close-btn" onclick="document.getElementById('requisitionModal').classList.remove('active')">&times;</button>
+              </div>
+              <form action="{{ route('employee.requisition.store') }}" method="POST">
+                  @csrf
+                  <p style="font-size:13px; color:#64748b; margin-top:0; margin-bottom:20px;">
+                      This request will be sent directly to HR. Once approved, it will automatically become a public job posting.
+                  </p>
+
+                  <div style="margin-bottom:15px;">
+                      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:5px;">Job Title Needed <span style="color:red">*</span></label>
+                      <input type="text" name="job_title" required placeholder="e.g., Senior Software Engineer" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;">
+                  </div>
+                  
+                  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:15px;">
+                      <div>
+                          <label style="display:block; font-size:13px; font-weight:600; margin-bottom:5px;">Employment Type <span style="color:red">*</span></label>
+                          <select name="employment_type" required style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;">
+                              <option value="Full-time">Full-time</option>
+                              <option value="Part-time">Part-time</option>
+                              <option value="Contract">Contract</option>
+                              <option value="Internship">Internship</option>
+                          </select>
+                      </div>
+                      <div>
+                          <label style="display:block; font-size:13px; font-weight:600; margin-bottom:5px;">Headcount Needed <span style="color:red">*</span></label>
+                          <input type="number" name="headcount" min="1" value="1" required style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px;">
+                      </div>
+                  </div>
+
+                  <div style="margin-bottom:24px;">
+                      <label style="display:block; font-size:13px; font-weight:600; margin-bottom:5px;">Justification / Reason <span style="color:red">*</span></label>
+                      <textarea name="justification" rows="3" required placeholder="Why does your team need this position filled?" style="width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:8px; font-family:inherit;"></textarea>
+                  </div>
+
+                  <div style="text-align:right;">
+                      <button type="button" onclick="document.getElementById('requisitionModal').classList.remove('active')" style="padding:10px 16px; border-radius:8px; border:1px solid #cbd5e1; background:#fff; font-weight:600; color:#475569; cursor:pointer; margin-right:8px;">Cancel</button>
+                      <button type="submit" class="pill-btn" style="border-radius:8px; padding:10px 20px;">Submit to HR</button>
+                  </div>
+              </form>
+          </div>
+      </div>
+      @endif
+      {{-- === END MANAGER MSS SECTION === --}}
 
       {{-- NEW: ANNOUNCEMENT SECTION (Updated Design) --}}
       <section class="announcement-panel">
@@ -453,186 +552,205 @@
         </div>
 
         <div class="report-switch">
-          <button class="report-btn active" data-section="attendance">Attendance</button>
-          <button class="report-btn" data-section="overtime">Overtime</button>
+          <button class="report-btn active" data-section="overtime">Overtime</button>
           <button class="report-btn" data-section="leave">Leave</button>
           <button class="report-btn" data-section="predictive">Predictive</button>
-          <button class="report-btn" data-section="recruitment">Recruitment</button>
-          <button class="report-btn" data-section="training">Training</button>
-          <button class="report-btn" data-section="appraisal">Appraisal / KPI</button>
-          <button class="report-btn" data-section="onboarding">Onboarding</button>
         </div>
 
-        <div class="filter-row">
+        @php
+          $selectedMonth = request('month');
+          $monthNow = \Carbon\Carbon::today()->startOfMonth();
+          $monthOptions = collect(range(0, 11))->map(function ($i) use ($monthNow) {
+            $m = $monthNow->copy()->subMonths($i);
+            return ['value' => $m->format('Y-m'), 'label' => $m->format('F Y')];
+          });
+          $fallbackMonth = $monthOptions->first()['value'] ?? \Carbon\Carbon::today()->format('Y-m');
+          $selectedMonth = (is_string($selectedMonth) && preg_match('/^\\d{4}-\\d{2}$/', $selectedMonth)) ? $selectedMonth : $fallbackMonth;
+          $fromVal = $reportAttendance['period_start'] ?? \Carbon\Carbon::today()->subDays(29)->format('Y-m-d');
+          $toVal = $reportAttendance['period_end'] ?? \Carbon\Carbon::today()->format('Y-m-d');
+        @endphp
+        <form method="GET" class="filter-row" id="monthFilterForm">
           <div>
-            <label style="font-weight:600; color:#0f172a;">Period</label>
-            <select><option>Last 30 days</option></select>
+            <label style="font-weight:600; color:#0f172a;">Month</label>
+            <select name="month" id="monthSelect">
+              @foreach($monthOptions as $opt)
+                <option value="{{ $opt['value'] }}" @selected($selectedMonth === $opt['value'])>{{ $opt['label'] }}</option>
+              @endforeach
+            </select>
           </div>
           <div>
             <label style="font-weight:600; color:#0f172a;">From</label>
-            <input type="date" value="2025-11-14">
+            <input type="date" value="{{ $fromVal }}" readonly>
           </div>
           <div>
             <label style="font-weight:600; color:#0f172a;">To</label>
-            <input type="date" value="2025-12-14">
+            <input type="date" value="{{ $toVal }}" readonly>
           </div>
-        </div>
+        </form>
 
         <div class="mini-cards">
           <div class="mini-card">
             <h4>Attendance Rate</h4>
-            <div class="value">67%</div>
-            <p class="muted">Present vs total days</p>
+            <div class="value">{{ $reportAttendance['attendance_rate'] ?? 0 }}%</div>
+            <p class="muted">Present vs total days ({{ $reportAttendance['scope_label'] ?? 'You' }})</p>
           </div>
           <div class="mini-card">
             <h4>Overtime Hours</h4>
-            <div class="value">26h</div>
-            <p class="muted">Approved OT hours</p>
+            <div class="value">{{ $reportOvertime['total_hours'] ?? 0 }}h</div>
+            <p class="muted">Approved OT ({{ $reportOvertime['scope_label'] ?? 'You' }})</p>
           </div>
           <div class="mini-card">
             <h4>Leave Used</h4>
-            <div class="value">9 days</div>
-            <p class="muted">Remaining 17 days</p>
+            @php
+              $leaveUsed = isset($reportLeave['rows']) ? (float) collect($reportLeave['rows'])->sum('used') : 0;
+              $leaveRemaining = isset($reportLeave['rows']) ? (float) collect($reportLeave['rows'])->sum('remaining') : 0;
+            @endphp
+            <div class="value">{{ rtrim(rtrim(number_format($leaveUsed, 1), '0'), '.') }}</div>
+            <p class="muted">Remaining {{ rtrim(rtrim(number_format($leaveRemaining, 1), '0'), '.') }} days</p>
           </div>
           <div class="mini-card">
             <h4>Risk Signal</h4>
-            <div class="value">Low</div>
-            <p class="muted">Score 0 (late 1, absent 1, OT 2h)</p>
+            <div class="value">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
+            <p class="muted">Late {{ $reportAttendance['late_count'] ?? 0 }}, Absent {{ $reportAttendance['absent_count'] ?? 0 }}</p>
           </div>
         </div>
       </section>
 
-      <section class="reports-card report-section active" id="section-attendance">
-        <h4 style="margin:0 0 6px;"><i class="fa-solid fa-square-poll-vertical"></i> Attendance Trend</h4>
-        <p class="muted" style="margin:0 0 10px;">Stacked attendance status by day. Inspired by dashboard overview charts.</p>
-        <div class="chart-box" style="margin-bottom:12px;">
-          <canvas id="chart-attendance-trend" class="chart-canvas sm"></canvas>
+      <section class="reports-card report-section active" id="section-overtime">
+        <h4 style="margin:0 0 6px;"><i class="fa-solid fa-clock"></i> Overtime Cost ({{ $reportOvertime['scope_label'] ?? 'You' }})</h4>
+        <p class="muted" style="margin:0 0 10px;">Approved OT hours and cost by month.</p>
+        <div class="chart-box" style="margin-bottom:12px; min-height:220px;">
+          <canvas id="chart-overtime" class="chart-canvas sm"></canvas>
         </div>
-        <div class="two-col">
-          <table class="table-lite">
-            <thead><tr><th>Day</th><th>Present</th><th>Late</th><th>Absent</th><th>Leave</th></tr></thead>
-            <tbody>
-              <tr><td>Mon</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
-              <tr><td>Tue</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
-              <tr><td>Wed</td><td>1</td><td>0</td><td>1</td><td>0</td></tr>
-              <tr><td>Thu</td><td>0</td><td>1</td><td>0</td><td>0</td></tr>
-              <tr><td>Fri</td><td>1</td><td>0</td><td>0</td><td>0</td></tr>
-            </tbody>
-          </table>
-          <table class="table-lite">
-            <thead><tr><th>Highlight</th><th>Count</th></tr></thead>
-            <tbody>
-              <tr><td>Tue</td><td>1 late</td></tr>
-              <tr><td>Thu</td><td>1 absent</td></tr>
-            </tbody>
-          </table>
+        <table class="table-lite">
+          <thead><tr><th>Month</th><th>Hours</th><th>Cost</th></tr></thead>
+          <tbody>
+            @forelse(($reportOvertime['table_rows'] ?? []) as $row)
+            <tr><td>{{ $row['month'] }}</td><td>{{ $row['hours'] }}h</td><td>RM{{ number_format($row['cost']) }}</td></tr>
+            @empty
+            <tr><td colspan="3" class="muted">No approved overtime in the last 12 months.</td></tr>
+            @endforelse
+          </tbody>
+        </table>
+      </section>
+      <section class="reports-card report-section" id="section-leave">
+        <h4 style="margin:0 0 6px;"><i class="fa-solid fa-umbrella-beach"></i> Leave Usage ({{ $reportLeave['scope_label'] ?? 'You' }})</h4>
+        <p class="muted" style="margin:0 0 10px;">Usage by type with a compact bar chart and balances table ({{ $reportLeave['year'] ?? now()->year }}).</p>
+        <div class="chart-box" style="margin-bottom:12px; min-height:220px;">
+          <canvas id="chart-leave-usage" class="chart-canvas sm"></canvas>
+        </div>
+        <table class="table-lite">
+          <thead><tr><th>Type</th><th>Used</th><th>Remaining</th></tr></thead>
+          <tbody>
+            @forelse(($reportLeave['rows'] ?? []) as $row)
+              <tr>
+                <td>{{ $row['type'] }}</td>
+                <td>{{ rtrim(rtrim(number_format((float) $row['used'], 2), '0'), '.') }}</td>
+                <td>{{ rtrim(rtrim(number_format((float) $row['remaining'], 2), '0'), '.') }}</td>
+              </tr>
+            @empty
+              <tr><td colspan="3" class="muted">No leave data for this year.</td></tr>
+            @endforelse
+          </tbody>
+        </table>
+      </section>
+      <section class="reports-card report-section" id="section-predictive">
+        <h4 style="margin:0 0 6px;"><i class="fa-solid fa-bolt"></i> Predictive Signals</h4>
+        <p class="muted" style="margin:0 0 12px;">Rule-based scoring to flag attendance risk, OT projection, and leave shortage.</p>
+
+        <div class="mini-cards" style="margin-top:0;">
+          <div class="mini-card">
+            <h4>Attendance Risk</h4>
+            <div class="value">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
+            <p class="muted">Score {{ $reportPredictive['attendance_risk_score'] ?? 0 }} (last 30 days)</p>
+          </div>
+          <div class="mini-card">
+            <h4>Projected OT Cost</h4>
+            <div class="value">RM{{ number_format((int) ($reportPredictive['projected_ot_cost'] ?? 0)) }}</div>
+            <p class="muted">Avg last 3 months ({{ $reportPredictive['scope_label'] ?? 'You' }})</p>
+          </div>
+          <div class="mini-card">
+            <h4>Leave Signal</h4>
+            <div class="value">{{ $reportPredictive['leave_signal'] ?? 'OK' }}</div>
+            <p class="muted">Types at/below 0 remaining</p>
+          </div>
         </div>
       </section>
 
-      <p style="text-align:center; color:#4b5563; font-size:12px; margin:10px 0 0;">Figure 4.1 : Employee Dashboard.</p>
+      <p style="text-align:center; color:#4b5563; font-size:12px; margin:10px 0 0;">Figure 4.1 : {{ $dashboardLabel }}.</p>
       <footer>&copy; 2025 Web-Based HRMS. All Rights Reserved.</footer>
     </main>
   </div>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      const groups  = document.querySelectorAll('.sidebar-group');
-      const toggles = document.querySelectorAll('.sidebar-toggle');
-      const links   = document.querySelectorAll('.submenu a, .sidebar-quick-link');
-      const STORAGE_KEY = 'hrms_sidebar_open_group';
-
-      const normPath = (u) => {
-        const url = new URL(u, location.origin);
-        let p = url.pathname
-          .replace(/\/index\.php$/i, '')
-          .replace(/\/index\.php\//i, '/')
-          .replace(/\/+$/ , '');
-        return p === '' ? '/' : p;
-      };
-      const here = normPath(location.href);
-
-      groups.forEach(g => {
-        g.classList.remove('open');
-        const t = g.querySelector('.sidebar-toggle');
-        if (t) t.setAttribute('aria-expanded','false');
-      });
-      links.forEach(a => a.classList.remove('active'));
-
-      let activeLink = null;
-      for (const a of links) {
-        if (normPath(a.href) === here) { activeLink = a; break; }
-      }
-      if (!activeLink) {
-        for (const a of links) {
-          const p = normPath(a.href);
-          if (p !== '/' && here.startsWith(p)) { activeLink = a; break; }
-        }
-      }
-
-      let openedByActive = false;
-      if (activeLink) {
-        activeLink.classList.add('active');
-        const g = activeLink.closest('.sidebar-group');
-        if (g) {
-          g.classList.add('open');
-          const t = g.querySelector('.sidebar-toggle');
-          if (t) t.setAttribute('aria-expanded','true');
-          openedByActive = true;
-          const idx = Array.from(groups).indexOf(g);
-          if (idx >= 0) localStorage.setItem(STORAGE_KEY, String(idx));
-        }
-      }
-
-      if (!openedByActive) {
-        const idx = localStorage.getItem(STORAGE_KEY);
-        if (idx !== null && groups[idx]) {
-          groups[idx].classList.add('open');
-          const t = groups[idx].querySelector('.sidebar-toggle');
-          if (t) t.setAttribute('aria-expanded','true');
-        } else if (groups[0]) {
-          groups[0].classList.add('open');
-          const t0 = groups[0].querySelector('.sidebar-toggle');
-          if (t0) t0.setAttribute('aria-expanded','true');
-        }
-      }
-
-      toggles.forEach((btn, i) => {
-        btn.setAttribute('role','button');
-        btn.setAttribute('tabindex','0');
-
-        const doToggle = (e) => {
-          // If this is a direct link (like Dashboard), let it navigate
-          if (btn.classList.contains('sidebar-quick-link')) return;
-
-          e.preventDefault();
-          const group = btn.closest('.sidebar-group');
-          const isOpen = group.classList.contains('open');
-
-          groups.forEach(g => {
-            g.classList.remove('open');
-            const t = g.querySelector('.sidebar-toggle');
-            if (t) t.setAttribute('aria-expanded','false');
-          });
-
-          if (!isOpen) {
-            group.classList.add('open');
-            btn.setAttribute('aria-expanded','true');
-            localStorage.setItem(STORAGE_KEY, String(i));
-          } else {
-            btn.setAttribute('aria-expanded','false');
-            localStorage.removeItem(STORAGE_KEY);
-          }
-        };
-
-        btn.addEventListener('click', doToggle);
-        btn.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') doToggle(e);
-        });
-      });
-
       // Reports switcher
       const reportButtons = document.querySelectorAll('.report-btn');
       const reportSections = document.querySelectorAll('.report-section');
+      let overtimeChartCreated = false;
+      let leaveChartCreated = false;
+      function maybeCreateOvertimeChart() {
+        if (overtimeChartCreated) return;
+        const ctx3 = document.getElementById('chart-overtime');
+        if (!ctx3 || typeof Chart === 'undefined') return;
+        const labels = otLabels.length ? otLabels : ['No data'];
+        const cost = otCost.length ? otCost : [0];
+        new Chart(ctx3, {
+          type: 'line',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: 'OT Cost (RM)',
+              data: cost,
+              borderColor: '#1f78f0',
+              backgroundColor: 'rgba(31,120,240,0.15)',
+              tension: 0.35,
+              fill: true,
+              pointRadius: 5
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { beginAtZero: true, grid: { color: '#e5e7eb' } },
+              x: { grid: { display: false } }
+            },
+            plugins: { legend: { display: false } }
+          }
+        });
+        overtimeChartCreated = true;
+      }
+
+      function maybeCreateLeaveChart() {
+        if (leaveChartCreated) return;
+        const ctx = document.getElementById('chart-leave-usage');
+        if (!ctx || typeof Chart === 'undefined') return;
+        const labels = leaveChartLabels.length ? leaveChartLabels : ['No data'];
+        const used = leaveChartUsed.length ? leaveChartUsed : [0];
+        const remaining = leaveChartRemaining.length ? leaveChartRemaining : [0];
+        new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [
+              { label: 'Used', data: used, backgroundColor: '#38bdf8' },
+              { label: 'Remaining', data: remaining, backgroundColor: '#22c55e' }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: { beginAtZero: true, grid: { color: '#e5e7eb' } },
+              x: { grid: { display: false } }
+            },
+            plugins: { legend: { display: true, position: 'top' } }
+          }
+        });
+        leaveChartCreated = true;
+      }
+
       reportButtons.forEach(btn => {
         btn.addEventListener('click', () => {
           const target = btn.getAttribute('data-section');
@@ -647,20 +765,50 @@
           if (!matched) {
             reportSections.forEach(sec => sec.classList.remove('active'));
           }
+          if (target === 'overtime') maybeCreateOvertimeChart();
+          if (target === 'leave') maybeCreateLeaveChart();
         });
       });
 
-      // Chart.js data - adjust values as needed
-      const att7Labels = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-      const att7Data = [88, 90, 92, 89, 80, 78, 85];
-      const trendLabels = ['Mon','Tue','Wed','Thu','Fri'];
-      const trendLate = [0, 0, 2, 0, 0];
-      const trendAbsent = [0, 0, 0, 1, 0];
-      const otLabels = ['Jan','Feb','Mar','Projected'];
-      const otHours = [6, 12, 8, 10];
-      const otCost = [640, 1080, 720, 900];
-      const leaveLabels = ['Annual','Sick','Emergency'];
-      const leaveUsed = [6, 2, 1];
+      // Chart.js data from server (attendance by employee/supervisor scope)
+      @php
+        $chartTrendLabels = $reportAttendance['trend_labels'] ?? ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+        $chartTrendPresent = $reportAttendance['trend_present'] ?? [0,0,0,0,0,0,0];
+        $chartTrendLate = $reportAttendance['trend_late'] ?? [0,0,0,0,0,0,0];
+        $chartTrendAbsent = $reportAttendance['trend_absent'] ?? [0,0,0,0,0,0,0];
+        $chartOtLabels = $reportOvertime['labels'] ?? [];
+        $chartOtCost = $reportOvertime['cost_data'] ?? [];
+        $chartLeaveLabels = $reportLeave['labels'] ?? [];
+        $chartLeaveUsed = $reportLeave['used'] ?? [];
+        $chartLeaveRemaining = $reportLeave['remaining'] ?? [];
+      @endphp
+      const trendLabels = @json($chartTrendLabels);
+      const trendPresent = @json($chartTrendPresent);
+      const trendLate = @json($chartTrendLate);
+      const trendAbsent = @json($chartTrendAbsent);
+      const otLabels = @json($chartOtLabels);
+      const otCost = @json($chartOtCost);
+      const leaveChartLabels = @json($chartLeaveLabels);
+      const leaveChartUsed = @json($chartLeaveUsed);
+      const leaveChartRemaining = @json($chartLeaveRemaining);
+
+      // Overtime section is active by default (attendance trend removed)
+      maybeCreateOvertimeChart();
+
+      // Month selector auto-submit
+      (function () {
+        const sel = document.getElementById('monthSelect');
+        const form = document.getElementById('monthFilterForm');
+        if (sel && form) {
+          sel.addEventListener('change', function () {
+            form.submit();
+          });
+        }
+      })();
+
+      // Attendance (Last 7 Days) chart uses the same labels as the trend
+      const att7Labels = trendLabels;
+      const att7Data = trendPresent;
 
       const ctx1 = document.getElementById('chart-attendance-7d');
       if (ctx1) {
@@ -669,7 +817,7 @@
           data: {
             labels: att7Labels,
             datasets: [{
-              label: 'Present %',
+              label: 'Present',
               data: att7Data,
               fill: true,
               backgroundColor: 'rgba(37,99,235,0.15)',
@@ -682,7 +830,7 @@
             responsive: true,
             maintainAspectRatio: false,
             scales: {
-              y: { beginAtZero: true, max: 100, grid: { color: '#e5e7eb' } },
+              y: { beginAtZero: true, grid: { color: '#e5e7eb' } },
               x: { grid: { display:false } }
             },
             plugins: { legend: { display:false } }
@@ -690,80 +838,7 @@
         });
       }
 
-      const ctx2 = document.getElementById('chart-attendance-trend');
-      if (ctx2) {
-        new Chart(ctx2, {
-          type: 'line',
-          data: {
-            labels: trendLabels,
-            datasets: [
-              { label:'Late', data: trendLate, borderColor:'#f97316', backgroundColor:'rgba(249,115,22,0.2)', tension:0.35, fill:true },
-              { label:'Absent', data: trendAbsent, borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,0.2)', tension:0.35, fill:true }
-            ]
-          },
-          options: {
-            responsive:true,
-            maintainAspectRatio:false,
-            scales:{
-              y:{ beginAtZero:true, ticks:{ stepSize:1 }, grid:{ color:'#e5e7eb' } },
-              x:{ grid:{ color:'#f3f4f6' } }
-            },
-            plugins:{ legend:{ display:true, position:'top' } }
-          }
-        });
-      }
-
-      const ctx3 = document.getElementById('chart-overtime');
-      if (ctx3) {
-        new Chart(ctx3, {
-          type:'line',
-          data:{
-            labels: otLabels,
-            datasets:[{
-              label:'OT Cost (RM)',
-              data: otCost,
-              borderColor:'#1f78f0',
-              backgroundColor:'rgba(31,120,240,0.15)',
-              tension:0.35,
-              fill:true,
-              pointRadius:5
-            }]
-          },
-          options:{
-            responsive:true,
-            maintainAspectRatio:false,
-            scales:{
-              y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } },
-              x:{ grid:{ display:false } }
-            },
-            plugins:{ legend:{ display:false } }
-          }
-        });
-      }
-
-      const ctx4 = document.getElementById('chart-leave-usage');
-      if (ctx4) {
-        new Chart(ctx4, {
-          type:'bar',
-          data:{
-            labels: leaveLabels,
-            datasets:[{
-              label:'Used',
-              data: leaveUsed,
-              backgroundColor:'#38bdf8'
-            }]
-          },
-          options:{
-            responsive:true,
-            maintainAspectRatio:false,
-            scales:{
-              y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } },
-              x:{ grid:{ display:false } }
-            },
-            plugins:{ legend:{ display:false } }
-          }
-        });
-      }
+      // Leave chart is created lazily when the Leave tab is opened.
     });
   </script>
 </body>

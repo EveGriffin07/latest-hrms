@@ -55,6 +55,7 @@
       <div class="form-container">
         <div class="form-card">
           <h3><i class="fa-solid fa-user-check"></i> Enroll Employee Face</h3>
+          <p class="muted" style="margin-top:4px;">Employees cannot overwrite their template; use <strong>Reset face</strong> below to allow re-enrollment (audit logged).</p>
 
           @if($employees->isEmpty())
             <p>No employees found. Add employees first.</p>
@@ -120,6 +121,32 @@
                 </button>
               </div>
             </form>
+
+            <hr style="margin:24px 0 16px; border:0; border-top:1px solid #e2e8f0;">
+            <h3 style="margin-bottom:10px;"><i class="fa-solid fa-unlock-keyhole"></i> Reset Face (Re-enroll)</h3>
+            <p class="muted" style="margin-bottom:12px;">HR/Admin only. Invalidates the current template and allows the employee to re-enroll. Audit log records who, when, and why.</p>
+            @php $resetEmployee = $employees->firstWhere('employee_id', $selected) ?? $employees->first(); @endphp
+            <form method="POST" action="{{ route('admin.face.reset', ['employee' => $resetEmployee]) }}" id="reset-face-form" style="display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end;">
+              @csrf
+              <div class="form-group" style="margin:0; flex:1; min-width:200px;">
+                <label for="reset-reason">Reason (optional)</label>
+                <input type="text" id="reset-reason" name="reason" placeholder="e.g. HR reset for re-enrollment" maxlength="500" style="width:100%;">
+              </div>
+              <button type="submit" class="btn btn-secondary" onclick="return confirm('Invalidate this employee\'s face template? They will need to re-enroll.');">
+                <i class="fa-solid fa-rotate-right"></i> Reset face for selected employee
+              </button>
+            </form>
+            <script>
+              (function() {
+                var sel = document.getElementById('employee-select');
+                var resetForm = document.getElementById('reset-face-form');
+                if (sel && resetForm) {
+                  sel.addEventListener('change', function() {
+                    resetForm.action = "{{ url('/admin/face/reset') }}/" + this.value;
+                  });
+                }
+              })();
+            </script>
           @endif
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 
 class OvertimeClaim extends Model
@@ -23,6 +24,11 @@ class OvertimeClaim extends Model
 
     public const STATUS_CANCELLED = 'CANCELLED';
 
+    /** Supervisor action when passing to admin (null = legacy). */
+    public const SUPERVISOR_ACTION_APPROVED = 'approved';
+    public const SUPERVISOR_ACTION_APPROVED_WITH_ADJUSTMENT = 'approved_with_adjustment';
+    public const SUPERVISOR_ACTION_ESCALATED_TO_ADMIN = 'escalated_to_admin';
+
     public const LOCATION_INSIDE = 'INSIDE';
     public const LOCATION_OUTSIDE = 'OUTSIDE';
     public const LOCATION_CLIENT_SITE = 'CLIENT_SITE';
@@ -32,7 +38,8 @@ class OvertimeClaim extends Model
     protected $fillable = [
         'employee_id', 'user_id', 'area_id', 'period_id', 'date', 'start_time', 'end_time', 'break_minutes', 'hours', 'rate_type',
         'reason', 'supporting_info', 'attachment_path', 'status', 'submitted_at', 'cancelled_at',
-        'supervisor_id', 'supervisor_remark', 'supervisor_action_at', 'approved_hours',
+        'supervisor_id', 'supervisor_remark', 'supervisor_action_at', 'supervisor_action_type',
+        'adjustment_reason', 'escalation_reason', 'recommendation', 'approved_hours',
         'admin_acted_by', 'admin_remark', 'admin_action_at', 'overtime_record_id',
         'location_type', 'location_other', 'proof_image_path', 'missing_proof_reason', 'no_proof_flag',
     ];
@@ -146,11 +153,11 @@ class OvertimeClaim extends Model
         return $this->status === self::STATUS_SUBMITTED_TO_SUPERVISOR;
     }
 
-    /** Only assigned supervisor can act when SUBMITTED_TO_SUPERVISOR. */
+    /** Only assigned supervisor (claim's supervisor_id is user_id) can act when SUBMITTED_TO_SUPERVISOR. */
     public function isActionableBySupervisor(?int $userId): bool
     {
         return $this->status === self::STATUS_SUBMITTED_TO_SUPERVISOR
-            && $userId && (int) $this->employee->supervisor_id === (int) $userId;
+            && $userId && (int) $this->supervisor_id === (int) $userId;
     }
 
     /** Admin can act only when ADMIN_PENDING. */
@@ -169,5 +176,110 @@ class OvertimeClaim extends Model
     public function getEffectiveApprovedHours(): float
     {
         return (float) ($this->approved_hours ?? $this->hours);
+    }
+
+    /** True when supervisor sent to admin as payroll-ready (approve or approve with adjustment). */
+    public function isPayrollReadyForAdmin(): bool
+    {
+        if ($this->status !== self::STATUS_ADMIN_PENDING) {
+            return false;
+        }
+        $action = $this->supervisor_action_type;
+        return $action === null
+            || $action === self::SUPERVISOR_ACTION_APPROVED
+            || $action === self::SUPERVISOR_ACTION_APPROVED_WITH_ADJUSTMENT;
+    }
+
+    /** True when supervisor escalated to admin (exception queue). */
+    public function isExceptionForAdmin(): bool
+    {
+        return $this->status === self::STATUS_ADMIN_PENDING
+            && $this->supervisor_action_type === self::SUPERVISOR_ACTION_ESCALATED_TO_ADMIN;
+    }
+
+    /** Label for supervisor action type. */
+    public function getSupervisorActionTypeLabel(): ?string
+    {
+        return match ($this->supervisor_action_type) {
+            self::SUPERVISOR_ACTION_APPROVED => 'Approved',
+            self::SUPERVISOR_ACTION_APPROVED_WITH_ADJUSTMENT => 'Approved with adjustment',
+            self::SUPERVISOR_ACTION_ESCALATED_TO_ADMIN => 'Escalated to admin',
+            default => null,
+        };
+    }
+
+    /** Progress label for supervisor view: where the claim is after supervisor action. */
+    public function getProgressLabelForSupervisor(): string
+    {
+        return match ($this->status) {
+            self::STATUS_SUBMITTED_TO_SUPERVISOR => 'Pending your action',
+            self::STATUS_SUPERVISOR_APPROVED, self::STATUS_ADMIN_PENDING => 'Pending admin',
+            self::STATUS_ADMIN_APPROVED => 'Posted to payroll',
+            self::STATUS_SUPERVISOR_REJECTED => 'Rejected by you',
+            self::STATUS_ADMIN_REJECTED => 'Rejected by admin',
+            self::STATUS_ADMIN_ON_HOLD => 'On hold',
+            self::STATUS_CANCELLED => 'Cancelled',
+            default => ucfirst(strtolower(str_replace('_', ' ', $this->status ?? ''))),
+        };
+    }
+
+    /** Progress label for admin view (acted list). */
+    public function getProgressLabelForAdmin(): string
+    {
+        return match ($this->status) {
+            self::STATUS_ADMIN_APPROVED => 'Posted to payroll',
+            self::STATUS_ADMIN_REJECTED => 'Rejected',
+            self::STATUS_ADMIN_ON_HOLD => 'On hold',
+            default => ucfirst(strtolower(str_replace('_', ' ', $this->status ?? ''))),
+        };
+    }
+
+    /** Multiplier for OT rate by date (weekday 1.5, weekend 2.0, holiday 3.0). */
+    public static function multiplierForDate(Carbon $date): float
+    {
+        $dateStr = $date->format('Y-m-d');
+        $holidays = config('hrms.overtime.holidays', []);
+        if (in_array($dateStr, $holidays, true)) {
+            return (float) config('hrms.overtime.multiplier_holiday', 3.0);
+        }
+        if ($date->isWeekend()) {
+            return (float) config('hrms.overtime.multiplier_weekend', 2.0);
+        }
+        return (float) config('hrms.overtime.multiplier_weekday', 1.5);
+    }
+
+    /** Whether this claim has an approved payroll (posted to payroll). */
+    public function hasApprovedPayroll(): bool
+    {
+        return $this->status === self::STATUS_ADMIN_APPROVED;
+    }
+
+    /** Payout amount for approved claims (approved_hours × hourly_rate × multiplier). */
+    public function getPayout(): float
+    {
+        $hours = $this->getEffectiveApprovedHours();
+        $monthly = (float) ($this->employee->base_salary ?? 0);
+        $hoursPerMonth = (float) config('hrms.overtime.working_hours_per_month', 160);
+        $hourly = $hoursPerMonth > 0 ? $monthly / $hoursPerMonth : 0;
+        $multiplier = self::multiplierForDate($this->date);
+        return round($hours * $hourly * $multiplier, 2);
+    }
+
+    /** Breakdown for payroll card: hours, hourly_rate, multiplier, payout, date. */
+    public function getPayoutBreakdown(): array
+    {
+        $hours = $this->getEffectiveApprovedHours();
+        $monthly = (float) ($this->employee->base_salary ?? 0);
+        $hoursPerMonth = (float) config('hrms.overtime.working_hours_per_month', 160);
+        $hourly = $hoursPerMonth > 0 ? $monthly / $hoursPerMonth : 0;
+        $multiplier = self::multiplierForDate($this->date);
+        $payout = round($hours * $hourly * $multiplier, 2);
+        return [
+            'date' => $this->date?->format('Y-m-d'),
+            'hours' => $hours,
+            'hourly_rate' => round($hourly, 2),
+            'multiplier' => $multiplier,
+            'payout' => $payout,
+        ];
     }
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
+use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
@@ -15,36 +16,55 @@ class LoginController extends Controller
 
     public function login(Request $request)
     {
-        // 1. Validate input
         $request->validate([
             'email'    => 'required|email',
             'password' => 'required|string',
         ]);
 
-        // 2. Attempt Login
         $credentials = [
             'email'    => $request->email,
             'password' => $request->password,
         ];
 
         if (Auth::attempt($credentials)) {
-            $request->session()->regenerate(); // prevent session fixation
-
+            $request->session()->regenerate();
             $user = Auth::user();
+            $employeeId = $user?->employee?->employee_id ?? null;
+            AuditLogService::log(
+                AuditLogService::CATEGORY_AUTH,
+                'login_success',
+                AuditLogService::STATUS_SUCCESS,
+                'Login successful',
+                ['email' => $request->email],
+                $employeeId,
+                AuditLogService::SEVERITY_INFO
+            );
 
-            // 3. Redirect based on role
-            // Redirect based on role
-            if ($user->role === 'admin') {
+            $role = strtolower(trim((string) ($user->role ?? '')));
+            if (in_array($role, ['admin', 'administrator', 'hr', 'manager'], true)) {
                 return redirect()->route('admin.dashboard');
             }
-
-            if ($user->role === 'employee') {
+            if ($role === 'supervisor') {
+                return redirect()->route('employee.overtime_inbox.index');
+            }
+            if ($role === 'employee') {
                 return redirect()->route('employee.dashboard');
             }
-
-            // Default fallback for applicants
-            return redirect()->route('applicant.jobs');
+            if ($role === 'applicant') {
+                return redirect()->route('applicant.jobs');
+            }
+            return redirect()->route('login');
         }
+
+        AuditLogService::log(
+            AuditLogService::CATEGORY_AUTH,
+            'login_failed',
+            AuditLogService::STATUS_FAILED,
+            'Failed login attempt',
+            ['email' => $request->email],
+            null,
+            AuditLogService::SEVERITY_WARN
+        );
 
         return back()->withErrors([
             'email' => 'Invalid email or password.',
@@ -53,6 +73,18 @@ class LoginController extends Controller
 
     public function logout(Request $request)
     {
+        $user = Auth::user();
+        $employeeId = $user ? ($user->employee->employee_id ?? null) : null;
+        AuditLogService::log(
+            AuditLogService::CATEGORY_AUTH,
+            'logout',
+            AuditLogService::STATUS_SUCCESS,
+            'Logout',
+            null,
+            $employeeId,
+            AuditLogService::SEVERITY_INFO
+        );
+
         Auth::logout();
         $request->session()->invalidate();
         $request->session()->regenerateToken();

@@ -114,6 +114,32 @@
               </div>
             </div>
           </div>
+
+          @if($employee->bank_code || $employee->bank_account_holder || $employee->bank_account_number)
+          <div class="card">
+            <div class="section-title">
+              <h3 style="margin:0;">Bank Account <span style="font-weight:400; color:#94a3b8;">(for payroll)</span></h3>
+            </div>
+            <div class="info-grid">
+              <div class="info-item">
+                <div class="info-label">Bank</div>
+                <div class="info-value">{{ $employee->getBankDisplayName() ?? '—' }}</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Account Type</div>
+                <div class="info-value">{{ $employee->getAccountTypeLabel() ?? '—' }}</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Account Holder</div>
+                <div class="info-value">{{ $employee->bank_account_holder ?? '—' }}</div>
+              </div>
+              <div class="info-item">
+                <div class="info-label">Account Number</div>
+                <div class="info-value">{{ $employee->getMaskedAccountNumber() ?? '—' }}</div>
+              </div>
+            </div>
+          </div>
+          @endif
         </div>
       </div>
 

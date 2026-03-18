@@ -11,7 +11,9 @@ use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Auth; // <--- ADDED: Required for Auth::id()
 use App\Models\ApplicantProfile;
+use App\Models\Application;
 
 class AdminEmployeeController extends Controller
 {
@@ -43,10 +45,19 @@ class AdminEmployeeController extends Controller
             $query->where('employee_status', $status);
         }
 
+        $perPage = (int) $request->input('per_page', 25);
+        $perPage = in_array($perPage, [10, 25, 50, 100], true) ? $perPage : 25;
+
         $employees = $query
             ->orderBy('hire_date', 'desc')
-            ->paginate(10)
+            ->paginate($perPage, ['*'], 'page')
             ->withQueryString();
+
+        // Attach service snapshot for each employee for UI badges
+        $employees->getCollection()->transform(function ($emp) {
+            $emp->service_snapshot = $emp->serviceSnapshot();
+            return $emp;
+        });
 
         $totalEmployees   = Employee::count();
         $activeEmployees  = Employee::where('employee_status', 'active')->count();
@@ -60,6 +71,58 @@ class AdminEmployeeController extends Controller
 
         $departments = Department::orderBy('department_name')->get();
 
+        $tab = $request->input('tab', 'employees');
+
+        // Applicants (shared filter: q + status; department not applied due to job text field)
+        $allApplicants = ApplicantProfile::with('user')
+            ->orderBy('full_name')
+            ->get();
+
+        $latestApplications = $this->latestApplicationsByApplicant($allApplicants->pluck('applicant_id'));
+
+        $filteredApplicants = $allApplicants->map(function ($applicant) use ($latestApplications) {
+            $applicant->latestApplication = $latestApplications->get($applicant->applicant_id);
+            return $applicant;
+        })->filter(function ($applicant) use ($search, $status) {
+            // shared search
+            if ($search) {
+                $haystack = strtolower(
+                    ($applicant->full_name ?? '') . ' ' .
+                    ($applicant->first_name ?? '') . ' ' .
+                    ($applicant->last_name ?? '') . ' ' .
+                    (optional($applicant->user)->email ?? '') . ' ' .
+                    ($applicant->phone ?? '')
+                );
+                if (!str_contains($haystack, strtolower($search))) {
+                    return false;
+                }
+            }
+            // status for applicants matches latest application stage if present
+            if ($status) {
+                $stage = strtolower($applicant->latestApplication->app_stage ?? '');
+                if ($stage !== strtolower($status)) {
+                    return false;
+                }
+            }
+            return true;
+        })->values();
+
+        $totalApplicants    = ApplicantProfile::count();
+        $approvedApplicants = $latestApplications->filter(
+            fn ($app) => ($app->app_stage === 'Approved')
+        )->count();
+
+        $perPage = 10;
+        $page = request()->input('page_applicants', 1);
+        $applicantsPage = new \Illuminate\Pagination\LengthAwarePaginator(
+            $filteredApplicants->forPage($page, $perPage)->values(),
+            $filteredApplicants->count(),
+            $perPage,
+            $page,
+            ['path' => url()->current(), 'pageName' => 'page_applicants']
+        );
+        $applicants = $applicantsPage->getCollection();
+
         return view('admin.employee_list', compact(
             'employees',
             'totalEmployees',
@@ -69,7 +132,12 @@ class AdminEmployeeController extends Controller
             'departments',
             'search',
             'departmentId',
-            'status'
+            'status',
+            'applicants',
+            'applicantsPage',
+            'totalApplicants',
+            'approvedApplicants',
+            'tab'
         ));
     }
 
@@ -80,9 +148,47 @@ class AdminEmployeeController extends Controller
     {
         $departments = Department::orderBy('department_name')->get();
         $positions   = Position::orderBy('position_name')->get();
-        $applicants  = ApplicantProfile::with('user')->orderBy('full_name')->get();
+        $latestApplications = $this->latestApplicationsByApplicant();
 
-        return view('admin.employee_add', compact('departments', 'positions', 'applicants'));
+        $applicants  = ApplicantProfile::with('user')
+            ->orderBy('full_name')
+            ->get()
+            ->map(function ($applicant) use ($latestApplications) {
+                $applicant->latestApplication = $latestApplications->get($applicant->applicant_id);
+                return $applicant;
+            });
+
+        // =========================================================
+        // ✨ NEW: Fetch the list of Supervisors (where is_manager = 1)
+        // =========================================================
+        $supervisors = Employee::with(['user', 'position', 'department'])
+                    ->whereHas('position', function($q) {
+                        $q->where('is_manager', 1);
+                    })->get();
+
+        $totalEmployees   = Employee::count();
+        $activeEmployees  = Employee::where('employee_status', 'active')->count();
+        $departmentsCount = Department::count();
+        $today = now()->toDateString();
+        $onLeave = LeaveRequest::where('leave_status', 'approved')
+            ->whereDate('start_date', '<=', $today)
+            ->whereDate('end_date', '>=', $today)
+            ->count();
+        $totalApplicants    = ApplicantProfile::count();
+        $approvedApplicants = $latestApplications->filter(fn ($a) => $a->app_stage === 'Approved')->count();
+
+        return view('admin.employee_add', compact(
+            'departments',
+            'positions',
+            'applicants',
+            'supervisors', // <--- ADDED: Pass the supervisors to the Blade view
+            'totalEmployees',
+            'activeEmployees',
+            'departmentsCount',
+            'onLeave',
+            'totalApplicants',
+            'approvedApplicants'
+        ));
     }
 
     /**
@@ -91,8 +197,13 @@ class AdminEmployeeController extends Controller
     public function store(Request $request)
     {
         $applicant = null;
+        $latestApplication = null;
         if ($request->filled('applicant_id')) {
             $applicant = ApplicantProfile::with('user')->findOrFail($request->input('applicant_id'));
+
+            $latestApplication = Application::where('applicant_id', $applicant->applicant_id)
+                ->latest()
+                ->first();
         }
 
         $emailRule = Rule::unique('users', 'email');
@@ -121,6 +232,11 @@ class AdminEmployeeController extends Controller
             $user->name = $validated['name'] ?? $applicant->full_name;
             $user->email = $validated['email'] ?? $applicant->email;
             $user->role = 'employee';
+
+            // Carry over avatar from applicant profile when available
+            if ($applicant->avatar_path && empty($user->avatar_path)) {
+                $user->avatar_path = $applicant->avatar_path;
+            }
             $user->save();
             $usingExistingUser = true;
         } else {
@@ -136,6 +252,7 @@ class AdminEmployeeController extends Controller
         $employee = Employee::create([
             'user_id'         => $user->user_id,
             'department_id'   => $validated['department_id'],
+            'supervisor_id'   => $request->input('supervisor_id'), // <--- Already correctly added by you!
             'position_id'     => $validated['position_id'],
             'employee_code'   => $this->generateEmployeeCode(),
             'employee_status' => $validated['employee_status'],
@@ -145,9 +262,10 @@ class AdminEmployeeController extends Controller
             'address'         => $validated['address'] ?? ($applicant?->location ?? null),
         ]);
 
-        // Remove only the applicant just converted, leave others intact
-        if ($applicant) {
-            $applicant->delete();
+
+        if ($latestApplication) {
+            $latestApplication->app_stage = 'Hired';
+            $latestApplication->save();
         }
 
         $message = $usingExistingUser
@@ -159,9 +277,54 @@ class AdminEmployeeController extends Controller
             ->with('success', $message);
     }
 
+    /**
+     * Generate next employee code in ascending order: EMP-0001, EMP-0002, ...
+     * Uses the numeric part of existing employee_code values so the sequence
+     * is always strictly ascending regardless of employee_id.
+     */
     private function generateEmployeeCode(): string
     {
-        $next = (Employee::max('employee_id') ?? 0) + 1;
-        return 'EMP-' . str_pad($next, 4, '0', STR_PAD_LEFT);
+        $codes = Employee::query()
+            ->where('employee_code', 'like', 'EMP-%')
+            ->pluck('employee_code');
+
+        $maxNum = $codes->map(function ($code) {
+            return preg_match('/^EMP-(\d+)$/', $code, $m) ? (int) $m[1] : 0;
+        })->push(0)->max();
+
+        $next = $maxNum + 1;
+        return 'EMP-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+    }
+    /**
+     * Show a single employee profile.
+     */
+    public function show($employeeId)
+    {
+        $employee = Employee::with(['user', 'department', 'position'])->findOrFail($employeeId);
+
+        return view('admin.employee_profile', compact('employee'));
+    }
+
+    /**
+     * Get the latest application per applicant (keyed by applicant_id).
+     */
+    private function latestApplicationsByApplicant($applicantIds = null)
+    {
+        $query = Application::with('job')
+            ->select('applications.*')
+            ->whereIn('application_id', function ($sub) use ($applicantIds) {
+                $sub->selectRaw('MAX(application_id)')
+                    ->from('applications');
+                if ($applicantIds) {
+                    $sub->whereIn('applicant_id', $applicantIds);
+                }
+                $sub->groupBy('applicant_id');
+            });
+
+        if ($applicantIds) {
+            $query->whereIn('applicant_id', $applicantIds);
+        }
+
+        return $query->get()->keyBy('applicant_id');
     }
 }

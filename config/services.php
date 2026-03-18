@@ -37,8 +37,10 @@ return [
 
     'face_api' => [
         'url' => env('FACE_API_URL', 'http://127.0.0.1:8001'),
-        'threshold' => env('FACE_API_THRESHOLD', 0.35),
+        // Default lowered slightly for real-world camera noise; override via FACE_API_THRESHOLD in .env
+        'threshold' => env('FACE_API_THRESHOLD', 0.30),
         'model' => env('FACE_API_MODEL', 'buffalo_l'),
+        'cooldown_minutes' => (int) env('FACE_ATTENDANCE_COOLDOWN_MINUTES', 2),
     ],
 
 ];

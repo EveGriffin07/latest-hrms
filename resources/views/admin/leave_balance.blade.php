@@ -20,7 +20,12 @@
   .btn{background:#38bdf8;color:#0f172a;border-color:#38bdf8;cursor:pointer}
   .btn-ghost{background:#fff}
   .muted{color:#6b7280;font-size:.9rem}
-  .actions{display:flex;gap:6px;flex-wrap:wrap}
+  .actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .actions input[disabled]{background:#f1f5f9;color:#64748b;cursor:not-allowed}
+  .btn-edit{background:#6366f1;color:#fff;border-color:#6366f1;cursor:pointer;padding:10px 20px;font-size:15px;border-radius:8px}
+  .btn-save{background:#16a34a;color:#fff;border-color:#16a34a;cursor:pointer;padding:10px 20px;font-size:15px;border-radius:8px}
+  .btn-cancel-edit{background:#64748b;color:#fff;border-color:#64748b;cursor:pointer;padding:10px 20px;font-size:15px;border-radius:8px}
+  .table-toolbar{justify-content:flex-end}
   /* modal */
   .modal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
   .sheet{background:#fff;border-radius:10px;padding:16px;max-width:720px;width:92%}
@@ -70,11 +75,18 @@
 
     <!-- Table -->
     <div class="box">
+      <div class="table-toolbar" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+        <button type="button" class="btn-edit" id="table-edit-btn">Edit</button>
+        <span id="table-save-cancel" style="display:none;">
+          <button type="button" class="btn-save" id="table-save-btn">Save</button>
+          <button type="button" class="btn-cancel-edit" id="table-cancel-btn">Cancel</button>
+        </span>
+      </div>
       <table id="tbl">
         <thead>
           <tr>
             <th>Employee</th><th>Department</th>
-            <th>Annual (Remain)</th><th>Sick (Remain)</th><th>Unpaid (Remain)</th>
+            <th>Annual (Remain)</th><th>Sick (Remain)</th>
             <th>Details</th><th>Actions</th>
           </tr>
         </thead>
@@ -215,25 +227,27 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ================== Leave balance logic ================== */
   const $ = (s)=>document.querySelector(s);
   const tbody = $('#tbl tbody');
+  let currentRows = [];
 
   function render(rows) {
+    currentRows = rows || [];
     tbody.innerHTML = '';
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="7">No records.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6">No records.</td></tr>';
       return;
     }
     rows.forEach(r => {
       const tr = document.createElement('tr');
+      tr.dataset.rowId = r.id;
       tr.innerHTML = `
         <td><strong>${r.name}</strong><br><span class="muted">${r.id}</span></td>
         <td>${r.dept}</td>
         <td>${r.annual}</td>
         <td>${r.sick}</td>
-        <td>${r.unpaid}</td>
-        <td><button class="btn-ghost" data-id="${r.id}">View</button></td>
+        <td><button type="button" class="btn-ghost" data-id="${r.id}">View</button></td>
         <td class="actions">
-          <input type="number" min="0" data-field="annual" data-id="${r.id}" value="${r.annual}" />
-          <input type="number" min="0" data-field="sick" data-id="${r.id}" value="${r.sick}" />
+          <input type="number" min="0" data-field="annual" data-id="${r.id}" value="${r.annual}" disabled />
+          <input type="number" min="0" data-field="sick" data-id="${r.id}" value="${r.sick}" disabled />
         </td>
       `;
       tbody.appendChild(tr);
@@ -251,8 +265,55 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  const tableEditBtn = document.getElementById('table-edit-btn');
+  const tableSaveCancel = document.getElementById('table-save-cancel');
+  const tableSaveBtn = document.getElementById('table-save-btn');
+  const tableCancelBtn = document.getElementById('table-cancel-btn');
+
+  if (tableEditBtn) {
+    tableEditBtn.addEventListener('click', () => {
+      tbody.querySelectorAll('input[data-field]').forEach(inp => inp.disabled = false);
+      tableEditBtn.style.display = 'none';
+      tableSaveCancel.style.display = 'inline';
+    });
+  }
+  if (tableCancelBtn) {
+    tableCancelBtn.addEventListener('click', () => {
+      currentRows.forEach(row => {
+        const tr = tbody.querySelector(`tr[data-row-id="${row.id}"]`);
+        if (!tr) return;
+        tr.querySelector('input[data-field="annual"]').value = row.annual;
+        tr.querySelector('input[data-field="annual"]').disabled = true;
+        tr.querySelector('input[data-field="sick"]').value = row.sick;
+        tr.querySelector('input[data-field="sick"]').disabled = true;
+      });
+      tableEditBtn.style.display = 'inline';
+      tableSaveCancel.style.display = 'none';
+    });
+  }
+  if (tableSaveBtn) {
+    tableSaveBtn.addEventListener('click', () => {
+      tbody.querySelectorAll('tr[data-row-id]').forEach(tr => {
+        const id = tr.dataset.rowId;
+        const annualInp = tr.querySelector('input[data-field="annual"]');
+        const sickInp = tr.querySelector('input[data-field="sick"]');
+        if (!annualInp || !sickInp) return;
+        annualInp.disabled = true;
+        sickInp.disabled = true;
+        const annual = annualInp.value;
+        const sick = sickInp.value;
+        const row = currentRows.find(x => x.id === id);
+        if (row) { row.annual = annual; row.sick = sick; }
+        if (tr.cells[2]) tr.cells[2].textContent = annual;
+        if (tr.cells[3]) tr.cells[3].textContent = sick;
+      });
+      tableEditBtn.style.display = 'inline';
+      tableSaveCancel.style.display = 'none';
+    });
+  }
+
   async function loadData() {
-    tbody.innerHTML = '<tr><td colspan="7">Loading...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6">Loading...</td></tr>';
     const params = new URLSearchParams({
       department: $('#dept').value,
       q: $('#q').value.trim(),
@@ -263,7 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const json = await resp.json();
       render(Array.isArray(json.data) ? json.data : []);
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="7">Error: ${err.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6">Error: ${err.message}</td></tr>`;
     }
   }
 
@@ -302,5 +363,3 @@ document.addEventListener('DOMContentLoaded', () => {
 
 </body>
 </html>
-
-

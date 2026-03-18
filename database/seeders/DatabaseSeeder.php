@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             DepartmentPositionSeeder::class, // Creates HR Dept & Positions
             EmployeeSeeder::class,           // Creates John Employee
             KpiTemplateSeeder::class,
+            LeaveTypeSeeder::class,
         ]);
 
         // =========================================================

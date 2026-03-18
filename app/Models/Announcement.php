@@ -28,4 +28,9 @@ class Announcement extends Model
         'publish_at' => 'datetime',
         'expires_at' => 'date',
     ];
+
+    public function getAnnouncementCodeAttribute()
+    {
+        return 'ANN-' . str_pad($this->announcement_id, 3, '0', STR_PAD_LEFT);
+    }
 }

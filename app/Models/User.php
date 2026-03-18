@@ -1,13 +1,12 @@
 <?php
 
 namespace App\Models;
-
-// use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
-class User extends Authenticatable
+class User extends Authenticatable implements MustVerifyEmail
 {
     /** @use HasFactory<\Database\Factories\UserFactory> */
     use HasFactory, Notifiable;
@@ -26,7 +25,9 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
-        'avatar_path',    // Added this so the Seeder can set 'admin'
+        'avatar_path',
+        'area_id',
+        'dept_id',
     ];
 
     /**
@@ -52,9 +53,19 @@ class User extends Authenticatable
         ];
     }
 
-    // Add this inside your User class
     public function employee()
     {
         return $this->hasOne(Employee::class, 'user_id');
+    }
+
+    public function area()
+    {
+        return $this->belongsTo(Area::class, 'area_id');
+    }
+
+    /** Department (for department-based routing; sync from employee.department_id). */
+    public function department()
+    {
+        return $this->belongsTo(Department::class, 'dept_id', 'department_id');
     }
 }

@@ -8,44 +8,63 @@ use App\Models\TrainingEnrollment;
 use App\Models\Department;
 use App\Models\Employee;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
 
 class TrainingController extends Controller
 {
+    // 1. Index (Main Page)
     public function index()
     {
+        // Auto-update status
+        TrainingProgram::where('end_date', '<', Carbon::today())
+            ->where('tr_status', '!=', 'completed')
+            ->update(['tr_status' => 'completed']);
+
+        TrainingProgram::whereDate('start_date', '<=', Carbon::today())
+            ->whereDate('end_date', '>=', Carbon::today())
+            ->where('tr_status', '!=', 'active')
+            ->update(['tr_status' => 'active']);
+
         $programs = TrainingProgram::with('department')->orderBy('start_date', 'desc')->get();
+        $departments = Department::all();
 
         $total = $programs->count();
         $ongoing = $programs->where('tr_status', 'active')->count();
         $completed = $programs->where('tr_status', 'completed')->count();
         $upcoming = $programs->where('tr_status', 'planned')->count();
 
-        return view('admin.training_admin', compact('programs', 'total', 'ongoing', 'completed', 'upcoming'));
+        return view('admin.training_admin', compact('programs', 'departments', 'total', 'ongoing', 'completed', 'upcoming'));
     }
 
-    // Fetch Departments for Create Dropdown
-    public function create()
-    {
-        $departments = Department::all();
-        return view('admin.training_add', compact('departments'));
-    }
-
+    // 2. Store (Create New Training)
     public function store(Request $request)
     {
+        // STRICT VALIDATION
         $request->validate([
-            'trainingTitle' => 'required|string|max:255',
-            'trainerName'   => 'required|string|max:255',
-            'department'    => 'required|string',
-            'startDate'     => 'required|date',
-            'endDate'       => 'required|date|after_or_equal:startDate',
-            'mode'          => 'required|string',
-            'location'      => 'required|string',
-            'description'   => 'nullable|string',
+            'trainingTitle'   => 'required|string|max:255',
+            // Regex enforces alphabets, spaces, dots, commas, and hyphens only
+            'trainerName'     => ['required', 'string', 'max:255', 'regex:/^[a-zA-Z\s\.\,\-]+$/'],
+            'trainerCompany'  => 'nullable|string|max:255',
+            'trainerEmail'    => 'nullable|email|max:255',
+            'department'      => 'nullable|string', 
+            // after_or_equal:today ensures you cannot schedule a NEW training in the past
+            'startDate'       => 'required|date|after_or_equal:today',
+            'startTime'       => 'required', 
+            'endDate'         => 'required|date|after_or_equal:startDate', 
+            'mode'            => 'required|in:Onsite,Online',
+            'maxParticipants' => 'nullable|integer|min:1|required_if:mode,Onsite', 
+            'location'        => 'required|string|max:255',
+            'description'     => 'nullable|string',
+        ], [
+            'trainerName.regex' => 'The Trainer Name can only contain letters, spaces, dots, and hyphens.',
+            'startDate.after_or_equal' => 'The Start Date must be today or a future date.',
         ]);
 
-        // Find department by name (since option value is name)
-        $dept = Department::where('department_name', $request->department)->first();
-        $deptId = $dept ? $dept->department_id : null;
+        $deptId = null;
+        if ($request->department) {
+            $dept = Department::where('department_name', $request->department)->first();
+            $deptId = $dept ? $dept->department_id : null;
+        }
 
         $today = Carbon::today();
         $start = Carbon::parse($request->startDate);
@@ -59,156 +78,172 @@ class TrainingController extends Controller
         }
 
         TrainingProgram::create([
-            'training_name'  => $request->trainingTitle,
-            'provider'       => $request->trainerName,
-            'department_id'  => $deptId,
-            'start_date'     => $request->startDate,
-            'end_date'       => $request->endDate,
-            'mode'           => $request->mode,
-            'location'       => $request->location,
-            'tr_description' => $request->description,
-            'tr_status'      => $status,
+            'training_name'    => $request->trainingTitle,
+            'provider'         => $request->trainerName,
+            'trainer_company'  => $request->trainerCompany,
+            'trainer_email'    => $request->trainerEmail, 
+            'department_id'    => $deptId,
+            'start_date'       => $request->startDate,
+            'start_time'       => $request->startTime, 
+            'end_date'         => $request->endDate,
+            'mode'             => $request->mode,
+            'max_participants' => $request->mode == 'Online' ? null : $request->maxParticipants, 
+            'location'         => $request->location,
+            'tr_description'   => $request->description,
+            'tr_status'        => $status,
+            'qr_token'         => Str::random(40), 
         ]);
 
         return redirect()->route('admin.training')->with('success', 'Training program created successfully!');
     }
 
+    // 3. Update (Edit Existing Training)
+    public function update(Request $request, $id)
+    {
+        $program = TrainingProgram::findOrFail($id);
+
+        // STRICT VALIDATION
+        $request->validate([
+            'trainingTitle'   => 'required|string|max:255',
+            'trainerName'     => ['required', 'string', 'max:255', 'regex:/^[a-zA-Z\s\.\,\-]+$/'],
+            'trainerCompany'  => 'nullable|string|max:255', 
+            'trainerEmail'    => 'nullable|email|max:255',  
+            // Notice: NO after_or_equal:today here, so Admin can still edit historical records!
+            'startDate'       => 'required|date',
+            'startTime'       => 'required', 
+            'endDate'         => 'required|date|after_or_equal:startDate',
+            'mode'            => 'required|in:Onsite,Online',
+            'maxParticipants' => 'nullable|integer|min:1|required_if:mode,Onsite', 
+            'location'        => 'required|string|max:255',
+        ], [
+            'trainerName.regex' => 'The Trainer Name can only contain letters, spaces, dots, and hyphens.',
+        ]);
+
+        $deptId = null;
+        if ($request->department) {
+            $dept = Department::where('department_name', $request->department)->first();
+            $deptId = $dept ? $dept->department_id : null;
+        }
+
+        $today = Carbon::today();
+        $start = Carbon::parse($request->startDate);
+        $end   = Carbon::parse($request->endDate);
+        
+        $status = 'planned';
+        if ($today->between($start, $end)) $status = 'active';
+        elseif ($today->gt($end)) $status = 'completed';
+
+        $program->update([
+            'training_name'    => $request->trainingTitle,
+            'provider'         => $request->trainerName,
+            'trainer_company'  => $request->trainerCompany,
+            'trainer_email'    => $request->trainerEmail,  
+            'department_id'    => $deptId,
+            'start_date'       => $request->startDate,
+            'start_time'       => $request->startTime, 
+            'end_date'         => $request->endDate,
+            'mode'             => $request->mode,
+            'max_participants' => $request->mode == 'Online' ? null : $request->maxParticipants, 
+            'location'         => $request->location,
+            'tr_description'   => $request->description,
+            'tr_status'        => $status,
+        ]);
+
+        return redirect()->back()->with('success', 'Training program updated successfully!');
+    }
+
+    // 4. Delete
+    public function destroy($id)
+    {
+        $program = TrainingProgram::findOrFail($id);
+        $program->enrollments()->delete();
+        $program->delete();
+
+        return redirect()->route('admin.training')->with('success', 'Training program deleted successfully.');
+    }
+
+    // 5. Show Details
     public function show($id)
     {
         $program = TrainingProgram::with(['enrollments.employee.user', 'department'])
             ->findOrFail($id);
 
-        $enrolledEmployeeIds = $program->enrollments->pluck('employee_id')->toArray();
-
-        $potentialTrainees = Employee::with('user')
-            ->whereNotIn('employee_id', $enrolledEmployeeIds)
+        $enrolledIds = $program->enrollments->pluck('employee_id')->toArray();
+        
+        $potentialTrainees = Employee::with(['user', 'department'])
+            ->whereNotIn('employee_id', $enrolledIds)
             ->where('employee_status', 'active')
-            ->get()
-            ->sortBy(function ($employee) {
-                return $employee->user->name ?? '';
-            });
+            ->get();
 
-        return view('admin.training_show', compact('program', 'potentialTrainees'));
+        $departments = Department::all();
+
+        return view('admin.training_show', compact('program', 'potentialTrainees', 'departments'));
     }
 
+    // 6. Store Enrollment (BULK)
     public function storeEnrollment(Request $request, $id)
     {
         $request->validate([
-            'employee_id' => 'required|exists:employees,employee_id',
+            'employee_ids' => 'required|array',
+            'employee_ids.*' => 'exists:employees,employee_id',
         ]);
 
-        TrainingEnrollment::create([
-            'training_id'       => $id,
-            'employee_id'       => $request->employee_id,
-            'enrollment_date'   => now(),
-            'completion_status' => 'enrolled',
-            'remarks'           => null
-        ]);
+        // Capacity check
+        $program = TrainingProgram::findOrFail($id);
+        $currentEnrollmentCount = $program->enrollments()->count();
+        $attemptedEnrollmentCount = count($request->employee_ids);
 
-        return redirect()->back()->with('success', 'Employee enrolled successfully!');
-    }
-
-    public function getEvents()
-    {
-        $programs = TrainingProgram::all();
-        $events = [];
-
-        foreach ($programs as $program) {
-            $color = '#3b82f6'; // active/default = blue
-            if ($program->tr_status === 'completed') $color = '#22c55e'; // green
-            if ($program->tr_status === 'planned')   $color = '#f97316'; // orange
-
-            $events[] = [
-                'title' => $program->training_name . ' (' . $program->mode . ')',
-                'start' => $program->start_date,
-                'end'   => Carbon::parse($program->end_date)->addDay()->format('Y-m-d'),
-                'url'   => route('admin.training.show', $program->training_id),
-                'backgroundColor' => $color,
-                'borderColor'     => $color,
-            ];
+        if ($program->mode == 'Onsite' && $program->max_participants) {
+            if (($currentEnrollmentCount + $attemptedEnrollmentCount) > $program->max_participants) {
+                $availableSlots = $program->max_participants - $currentEnrollmentCount;
+                return redirect()->back()->with('error', "Cannot enroll. Only $availableSlots slot(s) remaining for this onsite training.");
+            }
         }
 
-        return response()->json($events);
+        $count = 0;
+        foreach ($request->employee_ids as $empId) {
+            $exists = TrainingEnrollment::where('training_id', $id)
+                        ->where('employee_id', $empId)->exists();
+            
+            if (!$exists) {
+                TrainingEnrollment::create([
+                    'training_id'       => $id,
+                    'employee_id'       => $empId,
+                    'enrollment_date'   => now(),
+                    'completion_status' => 'enrolled',
+                ]);
+                $count++;
+            }
+        }
+
+        return redirect()->back()->with('success', "$count employees enrolled successfully!");
     }
 
+    // 7. Update Status
     public function updateEnrollmentStatus(Request $request, $id)
     {
-        $request->validate([
-            'completion_status' => 'required|in:enrolled,completed,failed',
-            'remarks'           => 'nullable|string|max:255'
-        ]);
-
         $enrollment = TrainingEnrollment::findOrFail($id);
-
         $enrollment->update([
             'completion_status' => $request->completion_status,
             'remarks'           => $request->remarks
         ]);
-
-        return redirect()->back()->with('success', 'Participant status updated successfully!');
+        return redirect()->back()->with('success', 'Participant status updated.');
     }
 
-    // Show Edit Form (with Departments dropdown)
-    public function edit($id)
+    // API for Calendar
+    public function getEvents()
     {
-        $program = TrainingProgram::with('department')->findOrFail($id);
-        $departments = Department::all();
-        return view('admin.training_edit', compact('program', 'departments'));
-    }
-
-    public function update(Request $request, $id)
-    {
-        $request->validate([
-            'trainingTitle' => 'required|string|max:255',
-            'trainerName'   => 'required|string|max:255',
-            'department'    => 'required|string',
-            'startDate'     => 'required|date',
-            'endDate'       => 'required|date|after_or_equal:startDate',
-            'mode'          => 'required|string',
-            'location'      => 'required|string',
-            'description'   => 'nullable|string',
-        ]);
-
-        $program = TrainingProgram::findOrFail($id);
-
-        $dept = Department::where('department_name', $request->department)->first();
-        $deptId = $dept ? $dept->department_id : null;
-
-        $today = Carbon::today();
-        $start = Carbon::parse($request->startDate);
-        $end   = Carbon::parse($request->endDate);
-
-        $status = 'planned';
-        if ($today->between($start, $end)) {
-            $status = 'active';
-        } elseif ($today->gt($end)) {
-            $status = 'completed';
+        $programs = TrainingProgram::all();
+        $events = [];
+        foreach ($programs as $prog) {
+            $events[] = [
+                'title' => $prog->training_name,
+                'start' => $prog->start_date,
+                'end'   => Carbon::parse($prog->end_date)->addDay()->format('Y-m-d'),
+                'url'   => route('admin.training.show', $prog->training_id),
+                'backgroundColor' => $prog->tr_status == 'completed' ? '#10b981' : ($prog->tr_status == 'active' ? '#3b82f6' : '#f97316'),
+            ];
         }
-
-        $program->update([
-            'training_name'  => $request->trainingTitle,
-            'provider'       => $request->trainerName,
-            'department_id'  => $deptId,
-            'start_date'     => $request->startDate,
-            'end_date'       => $request->endDate,
-            'mode'           => $request->mode,
-            'location'       => $request->location,
-            'tr_description' => $request->description,
-            'tr_status'      => $status,
-        ]);
-
-        return redirect()->route('admin.training.show', $id)->with('success', 'Training program updated successfully!');
-    }
-
-    public function destroy($id)
-    {
-        $program = TrainingProgram::findOrFail($id);
-
-        // Delete enrollments first to prevent foreign key constraint issues
-        $program->enrollments()->delete();
-
-        $program->delete();
-
-        return redirect()->route('admin.training')->with('success', 'Training program deleted successfully.');
+        return response()->json($events);
     }
 }

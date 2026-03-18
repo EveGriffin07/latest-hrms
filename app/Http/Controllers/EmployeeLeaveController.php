@@ -9,6 +9,7 @@ use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Storage;
 
 class EmployeeLeaveController extends Controller
 {
@@ -34,15 +35,19 @@ class EmployeeLeaveController extends Controller
             ->orderBy('leave_request_id', 'desc')
             ->get();
 
+        $pendingStatuses = ['pending', 'supervisor_approved', 'pending_admin'];
         $summary = [
             'total'    => $requests->count(),
-            'pending'  => $requests->where('leave_status', 'pending')->count(),
+            'pending'  => $requests->whereIn('leave_status', $pendingStatuses)->count(),
             'approved' => $requests->where('leave_status', 'approved')->count(),
             'rejected' => $requests->where('leave_status', 'rejected')->count(),
         ];
 
         $year = now()->year;
-        $balances = $leaveTypes->map(function ($type) use ($employee, $year) {
+        $leaveTypeOrder = ['Annual Leave' => 1, 'Sick Leave' => 2, 'Emergency Leave' => 3, 'Compassionate Leave' => 4, 'Study Leave' => 5, 'Maternity Leave' => 6, 'Paternity Leave' => 7];
+        $specialTypes = ['maternity leave', 'paternity leave'];
+
+        $rawBalances = $leaveTypes->map(function ($type) use ($employee, $year) {
             $entitlement = $this->entitlementFor($employee, $type->leave_name);
 
             $approved = LeaveRequest::where('employee_id', $employee->employee_id)
@@ -53,25 +58,53 @@ class EmployeeLeaveController extends Controller
 
             $pending = LeaveRequest::where('employee_id', $employee->employee_id)
                 ->where('leave_type_id', $type->leave_type_id)
-                ->where('leave_status', 'pending')
+                ->whereIn('leave_status', ['pending', 'supervisor_approved', 'pending_admin'])
                 ->whereYear('start_date', $year)
                 ->sum('total_days');
 
             return [
-                'name'      => $type->leave_name,
-                'total'     => $entitlement,
-                'used'      => $approved,
-                'pending'   => $pending,
-                'remaining' => max($entitlement - $approved - $pending, 0),
+                'name'       => $type->leave_name,
+                'total'      => $entitlement,
+                'used'       => $approved,
+                'pending'    => $pending,
+                'remaining'  => max($entitlement - $approved - $pending, 0),
+                'leave_type_id' => $type->leave_type_id,
             ];
         });
 
+        $balances = $rawBalances->filter(function ($bal) use ($specialTypes) {
+            $nameLower = strtolower($bal['name']);
+            $isSpecial = in_array($nameLower, $specialTypes, true);
+            $hasEntitlement = (int) $bal['total'] > 0;
+            $hasUsage = (int) $bal['used'] > 0 || (int) $bal['pending'] > 0;
+            if ($bal['name'] === 'Annual Leave' || $bal['name'] === 'Sick Leave') {
+                return true;
+            }
+            if ($isSpecial) {
+                return $hasEntitlement;
+            }
+            return $hasEntitlement || $hasUsage;
+        })->sortBy(function ($bal) use ($leaveTypeOrder) {
+            return $leaveTypeOrder[$bal['name']] ?? 999;
+        })->values();
+
+        $pendingRequests = $requests->whereIn('leave_status', $pendingStatuses)->take(5);
+
+        $eligibleTypeIds = $balances->pluck('leave_type_id')->unique()->filter()->values();
+        $leaveTypesForForm = $eligibleTypeIds->isNotEmpty()
+            ? LeaveType::whereIn('leave_type_id', $eligibleTypeIds->toArray())
+                ->get()
+                ->sortBy(fn ($t) => $leaveTypeOrder[$t->leave_name] ?? 999)
+                ->values()
+            : $leaveTypes;
+
         return view('employee.leave', [
-            'leaveTypes' => $leaveTypes,
-            'requests'   => $requests,
-            'summary'    => $summary,
-            'balances'   => $balances,
-            'employee'   => $employee,
+            'leaveTypes'      => $leaveTypesForForm,
+            'requests'        => $requests,
+            'summary'         => $summary,
+            'balances'        => $balances,
+            'employee'        => $employee,
+            'pendingRequests' => $pendingRequests,
         ]);
     }
 
@@ -91,15 +124,24 @@ class EmployeeLeaveController extends Controller
             'reason'        => ['nullable', 'string', 'max:500'],
         ]);
 
-        $start = Carbon::parse($validated['start_date'])->startOfDay();
-        $end   = Carbon::parse($validated['end_date'])->startOfDay();
-        $totalDays = $start->diffInDays($end) + 1; // inclusive
-
-        // Re-check leave type
         $type = LeaveType::find($validated['leave_type_id']);
         if (!$type) {
             return back()->withErrors(['leave_type_id' => 'Invalid leave type selected.'])->withInput();
         }
+
+        $proofRules = ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'];
+        if ($type->isProofRequired()) {
+            $proofRules = ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'];
+        }
+        $request->validate(['proof' => $proofRules], [
+            'proof.required' => 'Proof document is required for ' . $type->leave_name . '.',
+            'proof.mimes'    => 'Proof must be PDF, JPG or PNG.',
+            'proof.max'      => 'Proof file must not exceed 5MB.',
+        ]);
+
+        $start = Carbon::parse($validated['start_date'])->startOfDay();
+        $end   = Carbon::parse($validated['end_date'])->startOfDay();
+        $totalDays = $start->diffInDays($end) + 1; // inclusive
 
         // service band entitlement
         $entitlement = $this->entitlementFor($employee, $type->leave_name);
@@ -107,9 +149,12 @@ class EmployeeLeaveController extends Controller
             return back()->withErrors(['leave_type_id' => 'You are not eligible for this leave type.'])->withInput();
         }
 
+        // Statuses that reserve days (not yet rejected/cancelled)
+        $reservingStatuses = ['pending', 'supervisor_approved', 'pending_admin', 'approved'];
+
         // Prevent overlapping pending/approved leaves for this employee
         $overlap = LeaveRequest::where('employee_id', $employee->employee_id)
-            ->whereIn('leave_status', ['pending', 'approved'])
+            ->whereIn('leave_status', $reservingStatuses)
             ->whereDate('start_date', '<=', $end)
             ->whereDate('end_date', '>=', $start)
             ->exists();
@@ -118,7 +163,7 @@ class EmployeeLeaveController extends Controller
             return back()->withErrors(['start_date' => 'You already have a pending/approved leave in this date range.'])->withInput();
         }
 
-        // Balance check: approved + pending must not exceed entitlement
+        // Balance check: approved + pending (all stages) must not exceed entitlement
         $year = now()->year;
         $approvedThisYear = LeaveRequest::where('employee_id', $employee->employee_id)
             ->where('leave_type_id', $type->leave_type_id)
@@ -128,13 +173,36 @@ class EmployeeLeaveController extends Controller
 
         $pendingThisYear = LeaveRequest::where('employee_id', $employee->employee_id)
             ->where('leave_type_id', $type->leave_type_id)
-            ->where('leave_status', 'pending')
+            ->whereIn('leave_status', ['pending', 'supervisor_approved', 'pending_admin'])
             ->whereYear('start_date', $year)
             ->sum('total_days');
 
         $remaining = max($entitlement - $approvedThisYear - $pendingThisYear, 0);
         if ($totalDays > $remaining) {
             return back()->withErrors(['end_date' => 'Insufficient balance for this leave type. Remaining (after pending): ' . $remaining . ' day(s).'])->withInput();
+        }
+
+        $proofPath = null;
+        if ($request->hasFile('proof')) {
+            $proofPath = $request->file('proof')->store('leave-proofs', 'public');
+        }
+
+        // Route to department supervisor (manager) or straight to admin if requester is supervisor / no supervisor
+        $department = $employee->department;
+        $supervisorId = null;
+        $leaveStatus = LeaveRequest::STATUS_PENDING;
+        if ($department && $department->manager_id) {
+            $isRequesterSupervisor = (int) $employee->user_id === (int) $department->manager_id;
+            if (!$isRequesterSupervisor) {
+                $supervisorId = $department->manager_id;
+                $leaveStatus = LeaveRequest::STATUS_PENDING;
+            } else {
+                // Supervisor taking leave: send directly to admin
+                $leaveStatus = LeaveRequest::STATUS_PENDING_ADMIN;
+            }
+        } else {
+            // No department manager: send to admin
+            $leaveStatus = LeaveRequest::STATUS_PENDING_ADMIN;
         }
 
         $req = LeaveRequest::create([
@@ -144,7 +212,9 @@ class EmployeeLeaveController extends Controller
             'end_date'      => $end,
             'total_days'    => $totalDays,
             'reason'        => $validated['reason'] ?? null,
-            'leave_status'  => 'pending',
+            'proof_path'    => $proofPath,
+            'supervisor_id' => $supervisorId,
+            'leave_status'  => $leaveStatus,
         ]);
 
         AuditLogService::log(
@@ -212,25 +282,30 @@ class EmployeeLeaveController extends Controller
         }
 
         $defaults = [
-            ['leave_name' => 'Annual Leave',        'le_description' => 'Paid annual leave',                 'default_days_year' => 14],
-            ['leave_name' => 'Sick Leave',          'le_description' => 'Paid sick leave',                   'default_days_year' => 8],
-            ['leave_name' => 'Emergency Leave',     'le_description' => 'Short-notice urgent matters',       'default_days_year' => 3],
-            ['leave_name' => 'Compassionate Leave', 'le_description' => 'Bereavement / compassionate leave', 'default_days_year' => 5],
-            ['leave_name' => 'Maternity Leave',     'le_description' => 'Maternity entitlement',             'default_days_year' => 60],
-            ['leave_name' => 'Paternity Leave',     'le_description' => 'Paternity entitlement',             'default_days_year' => 7],
-            ['leave_name' => 'Study Leave',         'le_description' => 'Training / exam leave',             'default_days_year' => 5],
+            ['leave_name' => 'Annual Leave',        'le_description' => 'Paid annual leave',                 'default_days_year' => 14, 'proof_requirement' => LeaveType::PROOF_NONE,     'proof_label' => null],
+            ['leave_name' => 'Sick Leave',          'le_description' => 'Paid sick leave',                   'default_days_year' => 8,  'proof_requirement' => LeaveType::PROOF_REQUIRED, 'proof_label' => 'Medical certificate / proof'],
+            ['leave_name' => 'Emergency Leave',     'le_description' => 'Short-notice urgent matters',       'default_days_year' => 3,  'proof_requirement' => LeaveType::PROOF_OPTIONAL,  'proof_label' => 'Supporting document (optional)'],
+            ['leave_name' => 'Compassionate Leave', 'le_description' => 'Bereavement / compassionate leave', 'default_days_year' => 5,  'proof_requirement' => LeaveType::PROOF_OPTIONAL,  'proof_label' => 'Supporting document (optional)'],
+            ['leave_name' => 'Maternity Leave',     'le_description' => 'Maternity entitlement',             'default_days_year' => 60, 'proof_requirement' => LeaveType::PROOF_REQUIRED, 'proof_label' => 'Medical / birth proof'],
+            ['leave_name' => 'Paternity Leave',     'le_description' => 'Paternity entitlement',             'default_days_year' => 7,  'proof_requirement' => LeaveType::PROOF_REQUIRED, 'proof_label' => 'Birth proof'],
+            ['leave_name' => 'Study Leave',         'le_description' => 'Training / exam leave',             'default_days_year' => 5,  'proof_requirement' => LeaveType::PROOF_REQUIRED, 'proof_label' => 'Course / exam proof'],
         ];
 
         foreach ($defaults as $row) {
             LeaveType::updateOrCreate(
                 ['leave_name' => $row['leave_name']],
-                ['le_description' => $row['le_description'], 'default_days_year' => $row['default_days_year']]
+                [
+                    'le_description' => $row['le_description'],
+                    'default_days_year' => $row['default_days_year'],
+                    'proof_requirement' => $row['proof_requirement'] ?? LeaveType::PROOF_NONE,
+                    'proof_label' => $row['proof_label'] ?? null,
+                ]
             );
         }
     }
 
     /**
-     * Determine yearly entitlement for a given leave type based on service band and basic eligibility.
+     * Determine entitlement for a given leave type: role/profile-based, pro-rated for new joiners.
      */
     private function entitlementFor($employee, string $leaveName): int
     {
@@ -247,16 +322,23 @@ class EmployeeLeaveController extends Controller
             return (int) $override->total_entitlement;
         }
 
-        // Annual leave
+        // Annual leave: band-based, pro-rated for new joiners (hire in current year)
         if (str_contains($name, 'annual')) {
-            return match ($band) {
+            $fullDays = match ($band) {
                 'BAND_A' => 8,
                 'BAND_B' => 12,
-                default  => 16, // BAND_C and above
+                default  => 16,
             };
+            $hireDate = $employee->hire_date ? Carbon::parse($employee->hire_date)->startOfDay() : null;
+            if ($hireDate && $hireDate->year === (int) $year) {
+                $endOfYear = $hireDate->copy()->endOfYear();
+                $monthsRemaining = max(1, $hireDate->diffInMonths($endOfYear) + 1);
+                return (int) min(round($fullDays * $monthsRemaining / 12), $fullDays);
+            }
+            return $fullDays;
         }
 
-        // Sick leave (non-hospitalisation)
+        // Sick leave: band-based
         if (str_contains($name, 'sick')) {
             return match ($band) {
                 'BAND_A' => 14,
@@ -270,19 +352,20 @@ class EmployeeLeaveController extends Controller
             return 60;
         }
 
-        // Maternity
+        // Maternity: gender-based eligibility
         if (str_contains($name, 'maternity')) {
-            return (strtolower($employee->gender ?? '') === 'female') ? 98 : 0;
+            return (strtolower((string) ($employee->gender ?? '')) === 'female') ? 98 : 0;
         }
 
-        // Paternity
+        // Paternity: male + married
         if (str_contains($name, 'paternity')) {
-            $isMale = strtolower($employee->gender ?? '') === 'male';
-            $isMarried = strtolower($employee->marital_status ?? '') === 'married';
+            $isMale = strtolower((string) ($employee->gender ?? '')) === 'male';
+            $isMarried = strtolower((string) ($employee->marital_status ?? '')) === 'married';
             return ($isMale && $isMarried) ? 7 : 0;
         }
 
-        // Default: use leave type default if provided
-        return 0;
+        // Emergency, Compassionate, Study: use leave type default (role-based could use same band logic later)
+        $type = LeaveType::whereRaw('LOWER(leave_name) = ?', [$name])->first();
+        return $type ? (int) ($type->default_days_year ?? 0) : 0;
     }
 }

@@ -25,7 +25,7 @@
         </div>
     @endif
 
-    <form class="auth-form" method="POST" action="#">
+    <form class="auth-form" method="POST" action="{{ route('password.email') }}">
         @csrf
 
         <div class="form-group">
@@ -36,6 +36,7 @@
                 name="email"
                 class="form-input"
                 required
+                autofocus
             >
         </div>
 

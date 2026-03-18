@@ -127,6 +127,25 @@
         </thead>
         <tbody></tbody>
       </table>
+      <section class="pagination-wrap" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:12px;">
+        <span id="paginationInfo">0 records</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button type="button" class="btn btn-ghost" id="firstPage" disabled><i class="fa-solid fa-angles-left"></i> First</button>
+          <button type="button" class="btn btn-ghost" id="prevPage" disabled>Prev</button>
+          <span id="pageNum">Page 1 of 1</span>
+          <button type="button" class="btn btn-ghost" id="nextPage" disabled>Next</button>
+          <button type="button" class="btn btn-ghost" id="lastPage" disabled>Last <i class="fa-solid fa-angles-right"></i></button>
+        </div>
+        <div>
+          <label>Show </label>
+          <select id="perPage">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </section>
       <p class="muted" style="margin-top:8px">Tip: use the checkbox column to select multiple rows for editing.</p>
     </div>
 
@@ -228,6 +247,10 @@ const SEED = [
 let DATA = JSON.parse(JSON.stringify(SEED));
 const PRISTINE = JSON.parse(JSON.stringify(SEED));
 
+let currentPage = 1;
+let perPage = 25;
+let pagination = { total: 0, last_page: 1, current_page: 1 };
+
 let EDIT_MODE = false;
 const SELECTED = new Set();
 const EDIT_BUFFER = {};
@@ -257,6 +280,32 @@ function filtered(){
     (!q || r.id.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)) &&
     (!d || r.dept===d) && inRange(r.last,s,e)
   );
+}
+
+function updatePaginationBar(){
+  const total = pagination.total || 0;
+  const cur = pagination.current_page || 1;
+  const last = pagination.last_page || 1;
+  if ($('#paginationInfo')) $('#paginationInfo').textContent = total + ' records';
+  if ($('#pageNum')) $('#pageNum').textContent = 'Page ' + cur + ' of ' + last;
+  if ($('#firstPage')) $('#firstPage').disabled = cur <= 1;
+  if ($('#prevPage')) $('#prevPage').disabled = cur <= 1;
+  if ($('#nextPage')) $('#nextPage').disabled = cur >= last;
+  if ($('#lastPage')) $('#lastPage').disabled = cur >= last;
+  if ($('#perPage') && $('#perPage').value !== String(perPage)) $('#perPage').value = String(perPage);
+}
+
+function refreshPaged(){
+  const full = filtered();
+  const total = full.length;
+  const lastPage = Math.max(1, Math.ceil(total / perPage));
+  currentPage = Math.min(Math.max(1, currentPage), lastPage);
+  const start = (currentPage - 1) * perPage;
+  const slice = full.slice(start, start + perPage);
+  pagination = { total, current_page: currentPage, last_page: lastPage, per_page: perPage };
+  render(slice);
+  updatePaginationBar();
+  kpis(full);
 }
 
 function render(rows){
@@ -304,7 +353,7 @@ function render(rows){
       if (cb.checked) SELECTED.add(id); else SELECTED.delete(id);
       if (EDIT_MODE && !cb.checked) delete EDIT_BUFFER[id];
       updateActionButtons();
-      render(filtered());
+      refreshPaged();
     });
   });
 
@@ -333,7 +382,7 @@ function render(rows){
   kpis(rows);
 }
 
-function renderFiltered(){ render(filtered()); }
+function renderFiltered(){ currentPage = 1; refreshPaged(); }
 
 document.getElementById('checkAll').addEventListener('change', (e)=>{
   SELECTED.clear();
@@ -427,6 +476,12 @@ tbody.addEventListener('click', (e)=>{
   const row = DATA.find(x=>x.id===btn.dataset.id);
   openModal(row);
 });
+
+$('#firstPage').addEventListener('click', ()=>{ if (currentPage > 1) { currentPage = 1; refreshPaged(); } });
+$('#prevPage').addEventListener('click', ()=>{ if (currentPage > 1) { currentPage--; refreshPaged(); } });
+$('#nextPage').addEventListener('click', ()=>{ if (currentPage < (pagination.last_page || 1)) { currentPage++; refreshPaged(); } });
+$('#lastPage').addEventListener('click', ()=>{ if (currentPage < (pagination.last_page || 1)) { currentPage = pagination.last_page; refreshPaged(); } });
+$('#perPage').addEventListener('change', function(){ perPage = parseInt(this.value, 10); currentPage = 1; refreshPaged(); });
 
 renderFiltered();
 </script>

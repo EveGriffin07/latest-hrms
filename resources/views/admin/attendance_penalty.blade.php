@@ -80,6 +80,45 @@
       <h2>Penalty Removal & Tracking</h2>
       <p class="subtitle">Approve or reject attendance-related penalties and filter the records by employee, department, reason, status, or date.</p>
 
+      @if(isset($todayAttendancePenalties) && $todayAttendancePenalties->count())
+        <section class="card" style="margin-bottom:16px;">
+          <h3 style="margin:0 0 8px;">Today’s Auto Penalties (Late / Absent)</h3>
+          <p class="muted" style="margin:0 0 10px; font-size:13px;">Employees who were late or absent today based on attendance records. Use this as a guide when reviewing penalties.</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th>Late minutes</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                @foreach($todayAttendancePenalties as $row)
+                  @php
+                    $emp = $row->employee;
+                    $user = $emp?->user;
+                    $dept = $emp?->department;
+                  @endphp
+                  <tr>
+                    <td>
+                      <strong>{{ $user->name ?? 'Unknown' }}</strong><br>
+                      <span class="muted">{{ $emp->employee_code ?? ('EMP-'.$row->employee_id) }}</span>
+                    </td>
+                    <td>{{ $dept->department_name ?? 'N/A' }}</td>
+                    <td>{{ ucfirst($row->at_status) }}</td>
+                    <td>{{ $row->late_minutes ?? 0 }}</td>
+                    <td>{{ \Illuminate\Support\Carbon::parse($row->date)->format('Y-m-d') }}</td>
+                  </tr>
+                @endforeach
+              </tbody>
+            </table>
+          </div>
+        </section>
+      @endif
+
       <!-- DIFFERENT STATS from Attendance Tracking -->
       <section class="summary" id="summary">
         <div class="card"><h3>Total Penalties</h3><p id="s-total">0</p></div>
@@ -125,11 +164,11 @@
           </div>
           <div class="split">
             <label for="start">Start Date</label>
-            <input type="date" id="start">
+            <input type="date" id="start" value="{{ now()->toDateString() }}">
           </div>
           <div class="split">
             <label for="end">End Date</label>
-            <input type="date" id="end">
+            <input type="date" id="end" value="{{ now()->toDateString() }}">
           </div>
           <div class="split" style="align-self:end;">
             <button class="btn btn-primary" id="apply"><i class="fa-solid fa-filter"></i> Apply</button>
@@ -157,11 +196,30 @@
         </table>
       </section>
 
+      <section class="pagination-wrap" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:12px;">
+        <span id="paginationInfo">0 records</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button type="button" class="btn btn-ghost" id="firstPage" disabled><i class="fa-solid fa-angles-left"></i> First</button>
+          <button type="button" class="btn btn-ghost" id="prevPage" disabled>Prev</button>
+          <span id="pageNum">Page 1 of 1</span>
+          <button type="button" class="btn btn-ghost" id="nextPage" disabled>Next</button>
+          <button type="button" class="btn btn-ghost" id="lastPage" disabled>Last <i class="fa-solid fa-angles-right"></i></button>
+        </div>
+        <div>
+          <label>Show </label>
+          <select id="perPage">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </section>
+
       <footer>© 2025 Web-Based HRMS. All Rights Reserved.</footer>
     </main>
   </div>
 
-  <!-- Confirm dialog -->
+  <!-- Confirm dialog (Approve) -->
   <div class="backdrop" id="confirm">
     <div class="dialog">
       <header id="confirmTitle">Confirm Action</header>
@@ -169,6 +227,23 @@
       <div class="actions">
         <button class="btn btn-ghost" id="cancelAction">Cancel</button>
         <button class="btn btn-primary" id="proceedAction">Proceed</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Reject dialog (requires reason) -->
+  <div class="backdrop" id="rejectBackdrop">
+    <div class="dialog">
+      <header>Reject Penalty Removal</header>
+      <div class="body">
+        <p id="rejectContext" style="margin:0 0 12px; color:#374151;"></p>
+        <label for="rejectionRemark" style="display:block; margin-bottom:6px; font-weight:600;">Rejection reason / remark <span style="color:#dc2626;">*</span></label>
+        <textarea id="rejectionRemark" rows="3" placeholder="Required. Enter reason for rejection..." style="width:100%; padding:10px; border:1px solid #d1d5db; border-radius:8px; font-size:.95rem;"></textarea>
+        <p id="rejectError" style="margin:8px 0 0; color:#dc2626; font-size:.9rem;"></p>
+      </div>
+      <div class="actions">
+        <button class="btn btn-ghost" id="rejectCancel">Cancel</button>
+        <button class="btn btn-reject" id="rejectSubmit"><i class="fa-solid fa-xmark"></i> Reject</button>
       </div>
     </div>
   </div>
@@ -276,6 +351,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let PENALTIES = [];
   let SUMMARY   = { total:0, pending:0, approved:0, rejected:0 };
+  let PAGINATION = { current_page: 1, last_page: 1, per_page: 25, total: 0 };
+  let currentPage = 1;
+  let perPage = 25;
 
   const $ = s => document.querySelector(s);
   const tbody = document.querySelector('#penaltyTable tbody');
@@ -287,12 +365,20 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#s-rejected').textContent = SUMMARY.rejected;
   }
 
+  function updatePagination() {
+    const p = PAGINATION;
+    if ($('#paginationInfo')) $('#paginationInfo').textContent = (p.total || 0) + ' records';
+    if ($('#pageNum')) $('#pageNum').textContent = 'Page ' + (p.current_page || 1) + ' of ' + (p.last_page || 1);
+    if ($('#prevPage')) $('#prevPage').disabled = (p.current_page || 1) <= 1;
+    if ($('#nextPage')) $('#nextPage').disabled = (p.current_page || 1) >= (p.last_page || 1);
+  }
+
   function wireActions() {
     document.querySelectorAll('.btn-approve').forEach(btn => {
       btn.addEventListener('click', () => {
         const pid = btn.getAttribute('data-pid');
-        const row = PENALTIES.find(p => p.pid === pid);
-        if (!row || row.status !== 'Pending') return;
+        const row = PENALTIES.find(p => String(p.penalty_id) === String(btn.getAttribute('data-id')));
+        if (!row || (row.status_raw || row.status || '').toLowerCase() !== 'pending') return;
         openConfirm(pid, btn.getAttribute('data-id'), 'approve', row);
       });
     });
@@ -300,9 +386,9 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.btn-reject').forEach(btn => {
       btn.addEventListener('click', () => {
         const pid = btn.getAttribute('data-pid');
-        const row = PENALTIES.find(p => p.pid === pid);
-        if (!row || row.status !== 'Pending') return;
-        openConfirm(pid, btn.getAttribute('data-id'), 'reject', row);
+        const row = PENALTIES.find(p => String(p.penalty_id) === String(btn.getAttribute('data-id')));
+        if (!row || (row.status_raw || row.status || '').toLowerCase() !== 'pending') return;
+        openRejectModal(pid, btn.getAttribute('data-id'), row);
       });
     });
   }
@@ -320,10 +406,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     rows.forEach(r => {
       const tr = document.createElement('tr');
-      const approveDisabled = r.status !== 'Pending' ? 'disabled' : '';
-      const rejectDisabled  = r.status !== 'Pending' ? 'disabled' : '';
-      const approveClasses  = `btn-xs btn-approve ${approveDisabled ? 'btn-disabled' : ''}`;
-      const rejectClasses   = `btn-xs btn-reject ${rejectDisabled ? 'btn-disabled' : ''}`;
+      const statusRaw = (r.status_raw || r.status || '').toLowerCase();
+      const isPending = statusRaw === 'pending';
+      const actionCell = isPending
+        ? `
+          <button class="btn-xs btn-approve" data-pid="${r.pid}" data-id="${r.penalty_id}">
+            <i class="fa-solid fa-check"></i> Approve
+          </button>
+          <button class="btn-xs btn-reject" data-pid="${r.pid}" data-id="${r.penalty_id}">
+            <i class="fa-solid fa-xmark"></i> Reject
+          </button>
+        `
+        : '<span style="color:#9ca3af;">—</span>';
 
       tr.innerHTML = `
         <td>${r.pid}</td>
@@ -332,15 +426,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <td>${r.reason}</td>
         <td class="points">${r.points}</td>
         <td>${r.date}</td>
-        <td><span class="status ${r.status.toLowerCase()}">${r.status}</span></td>
-        <td>
-          <button class="${approveClasses}" data-pid="${r.pid}" data-id="${r.penalty_id}">
-            <i class="fa-solid fa-check"></i> Approve
-          </button>
-          <button class="${rejectClasses}" data-pid="${r.pid}" data-id="${r.penalty_id}">
-            <i class="fa-solid fa-xmark"></i> Reject
-          </button>
-        </td>
+        <td><span class="status ${(r.status_raw || r.status || '').toLowerCase()}">${r.status}</span></td>
+        <td>${actionCell}</td>
       `;
       tbody.appendChild(tr);
     });
@@ -362,6 +449,8 @@ document.addEventListener('DOMContentLoaded', () => {
       status: $('#status').value,
       start: $('#start').value,
       end: $('#end').value,
+      page: String(currentPage),
+      per_page: String(perPage),
     });
 
     try {
@@ -370,7 +459,12 @@ document.addEventListener('DOMContentLoaded', () => {
       const json = await resp.json();
       PENALTIES = Array.isArray(json.data) ? json.data : [];
       SUMMARY = json.summary || SUMMARY;
+      PAGINATION = json.pagination || PAGINATION;
+      currentPage = PAGINATION.current_page || 1;
+      perPage = PAGINATION.per_page || 25;
+      if ($('#perPage')) $('#perPage').value = String(perPage);
       render(PENALTIES);
+      updatePagination();
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="8">Could not load penalties. ${err.message}</td></tr>`;
     } finally {
@@ -379,7 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  $('#apply').addEventListener('click', applyFilters);
+  $('#apply').addEventListener('click', () => { currentPage = 1; applyFilters(); });
   $('#clear').addEventListener('click', () => {
     $('#q').value = '';
     $('#dept').value = '';
@@ -387,8 +481,17 @@ document.addEventListener('DOMContentLoaded', () => {
     $('#status').value = '';
     $('#start').value = '';
     $('#end').value = '';
+    currentPage = 1;
     applyFilters();
   });
+  $('#firstPage').addEventListener('click', () => { if (currentPage > 1) { currentPage = 1; applyFilters(); } });
+  $('#prevPage').addEventListener('click', () => { if (currentPage > 1) { currentPage--; applyFilters(); } });
+  $('#nextPage').addEventListener('click', () => { if (currentPage < (PAGINATION.last_page || 1)) { currentPage++; applyFilters(); } });
+  $('#lastPage').addEventListener('click', () => { if (currentPage < (PAGINATION.last_page || 1)) { currentPage = PAGINATION.last_page; applyFilters(); } });
+  $('#perPage').addEventListener('change', function() { perPage = parseInt(this.value, 10); currentPage = 1; applyFilters(); });
+
+  // Initial load: show today's penalties by default (start/end prefilled with today)
+  applyFilters();
 
   /* ----- Approve / Reject with confirm dialog ----- */
   const confirmBack = document.getElementById('confirm');
@@ -397,16 +500,30 @@ document.addEventListener('DOMContentLoaded', () => {
   const cancelAction = document.getElementById('cancelAction');
   const proceedAction = document.getElementById('proceedAction');
 
-  let pendingAction = null; // {pid, id, type}
+  let pendingAction = null; // {pid, id, type} for approve
+  let pendingReject = null;  // {id, row} for reject
 
   function openConfirm(pid, id, type, row) {
-    confirmTitle.textContent = type === 'approve' ? 'Approve Penalty' : 'Reject Penalty';
+    confirmTitle.textContent = 'Approve Penalty Removal';
     confirmBody.innerHTML = `
-      <p>Are you sure you want to <strong>${type}</strong> penalty <strong>${row.pid}</strong> for <strong>${row.name} (${row.id})</strong>?</p>
+      <p>Are you sure you want to <strong>approve</strong> penalty <strong>${row.pid}</strong> for <strong>${row.name} (${row.id})</strong>?</p>
       <p style="margin-top:8px; color:#6b7280;">Reason: ${row.reason} - Points: ${row.points} - Date: ${row.date}</p>
     `;
-    pendingAction = { pid, id, type };
+    pendingAction = { pid, id, type: 'approve' };
     confirmBack.style.display = 'flex';
+  }
+
+  function openRejectModal(pid, id, row) {
+    pendingReject = { id, row };
+    document.getElementById('rejectContext').textContent = `Penalty ${row.pid} for ${row.name} (${row.id}). Reason: ${row.reason} - Points: ${row.points} - Date: ${row.date}.`;
+    document.getElementById('rejectionRemark').value = '';
+    document.getElementById('rejectError').textContent = '';
+    document.getElementById('rejectBackdrop').style.display = 'flex';
+  }
+
+  function closeRejectModal() {
+    document.getElementById('rejectBackdrop').style.display = 'none';
+    pendingReject = null;
   }
 
   function closeConfirm() {
@@ -417,6 +534,21 @@ document.addEventListener('DOMContentLoaded', () => {
   cancelAction.addEventListener('click', closeConfirm);
   confirmBack.addEventListener('click', e => { if (e.target === confirmBack) closeConfirm(); });
 
+  document.getElementById('rejectCancel').addEventListener('click', closeRejectModal);
+  document.getElementById('rejectBackdrop').addEventListener('click', e => { if (e.target === document.getElementById('rejectBackdrop')) closeRejectModal(); });
+
+  function submitStatus(id, body) {
+    return fetch(ENDPOINT_STATUS(id), {
+      method: 'POST',
+      headers: {
+        'X-CSRF-TOKEN': CSRF_TOKEN,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
   proceedAction.addEventListener('click', () => {
     if (!pendingAction) return;
     const { id, type } = pendingAction;
@@ -424,29 +556,61 @@ document.addEventListener('DOMContentLoaded', () => {
     proceedAction.disabled = true;
     proceedAction.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Working';
 
-    fetch(ENDPOINT_STATUS(id), {
-      method: 'POST',
-      headers: {
-        'X-CSRF-TOKEN': CSRF_TOKEN,
-        'Accept': 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ action: type }),
-    }).then(async resp => {
-      if (!resp.ok) {
-        const msg = await resp.text();
-        throw new Error(msg || 'Failed to update penalty');
-      }
-      return resp.json();
-    }).then(() => {
-      closeConfirm();
-      applyFilters();
-    }).catch(err => {
-      alert('Unable to update penalty: ' + err.message);
-    }).finally(() => {
-      proceedAction.disabled = false;
-      proceedAction.innerHTML = 'Proceed';
-    });
+    submitStatus(id, { action: type, expected_status: 'pending' })
+      .then(async resp => {
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.message || (resp.status === 422 ? 'Already processed.' : 'Failed to update penalty'));
+        }
+        return data;
+      })
+      .then(() => {
+        closeConfirm();
+        applyFilters();
+      })
+      .catch(err => {
+        alert(err.message || 'Unable to update penalty.');
+        applyFilters();
+      })
+      .finally(() => {
+        proceedAction.disabled = false;
+        proceedAction.innerHTML = 'Proceed';
+      });
+  });
+
+  document.getElementById('rejectSubmit').addEventListener('click', () => {
+    if (!pendingReject) return;
+    const remark = document.getElementById('rejectionRemark').value.trim();
+    const errEl = document.getElementById('rejectError');
+    if (!remark) {
+      errEl.textContent = 'Rejection reason is required.';
+      return;
+    }
+    errEl.textContent = '';
+    const btn = document.getElementById('rejectSubmit');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Rejecting...';
+
+    submitStatus(pendingReject.id, { action: 'reject', expected_status: 'pending', rejection_remark: remark })
+      .then(async resp => {
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          throw new Error(data.message || (resp.status === 422 ? 'Already processed.' : 'Failed to reject penalty'));
+        }
+        return data;
+      })
+      .then(() => {
+        closeRejectModal();
+        applyFilters();
+      })
+      .catch(err => {
+        errEl.textContent = err.message || 'Failed to reject.';
+        applyFilters();
+      })
+      .finally(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa-solid fa-xmark"></i> Reject';
+      });
   });
 
   /* ----- Init ----- */

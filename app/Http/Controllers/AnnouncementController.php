@@ -4,38 +4,40 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Announcement;
+use App\Models\Department; // <--- Import Department Model
 use Illuminate\Support\Facades\Auth;
 
 class AnnouncementController extends Controller
 {
+    // 1. Show List (Consolidated View)
     public function index()
     {
         $announcements = Announcement::latest('publish_at')->get();
-        return view('admin.dashboard_view', compact('announcements'));
+        // Fetch departments for the dynamic dropdown in the Modal
+        $departments = Department::all(); 
+
+        return view('admin.dashboard_view', compact('announcements', 'departments'));
     }
 
-    public function create()
-    {
-        return view('admin.dashboard_add');
-    }
-
+    // 2. Store (Create)
     public function store(Request $request)
     {
-        // 1. Validate Form Inputs
         $request->validate([
             'title'    => 'required|string|max:255',
-            'message'  => 'required|string', // Form uses 'message'
-            'audience' => 'required|string', // Form uses 'audience'
+            'message'  => 'required|string',
+            'audience' => 'required|string',
+            'priority' => 'required|string',
         ]);
 
-        // 2. Map Form Data to Database Columns
         Announcement::create([
             'title'         => $request->title,
-            'content'       => $request->message,  // MAPPING: message -> content
-            'audience_type' => $request->audience, // MAPPING: audience -> audience_type
+            'content'       => $request->message,
+            'audience_type' => $request->audience,
             'priority'      => $request->priority,
-            'department'    => $request->department,
-            'publish_at'    => now(),              // Default to current time
+            // Store Department Name or ID depending on your DB design. 
+            // Assuming storing ID is better, but if your table stores strings:
+            'department'    => $request->department, 
+            'publish_at'    => now(),
             'expires_at'    => $request->expires,
             'remarks'       => $request->remarks,
             'posted_by'     => Auth::id() ?? 1,
@@ -45,9 +47,39 @@ class AnnouncementController extends Controller
                          ->with('success', 'Announcement posted successfully!');
     }
 
-    public function show($id)
+    // 3. Update (Edit)
+    public function update(Request $request, $id)
     {
         $announcement = Announcement::findOrFail($id);
-        return view('admin.dashboard_detail', compact('announcement'));
+
+        $request->validate([
+            'title'    => 'required|string|max:255',
+            'message'  => 'required|string',
+            'priority' => 'required|string',
+        ]);
+
+        $announcement->update([
+            'title'         => $request->title,
+            'content'       => $request->message,
+            'audience_type' => $request->audience,
+            'priority'      => $request->priority,
+            'department'    => $request->department,
+            'expires_at'    => $request->expires,
+            'remarks'       => $request->remarks,
+        ]);
+
+        return redirect()->route('admin.announcements.index')
+                         ->with('success', 'Announcement updated successfully!');
     }
+
+    // 4. Delete
+    public function destroy($id)
+    {
+        $announcement = Announcement::findOrFail($id);
+        $announcement->delete();
+
+        return redirect()->route('admin.announcements.index')
+                         ->with('success', 'Announcement deleted successfully!');
+    }
+
 }

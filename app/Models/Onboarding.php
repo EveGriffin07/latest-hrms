@@ -9,7 +9,6 @@ class Onboarding extends Model
 {
     use HasFactory;
 
-    // Explicitly define table name since migration used singular 'onboarding'
     protected $table = 'onboarding';
     protected $primaryKey = 'onboarding_id';
 
@@ -18,7 +17,7 @@ class Onboarding extends Model
         'assigned_by',
         'start_date',
         'end_date',
-        'status', // 'pending', 'in_progress', 'completed'
+        'status', 
     ];
 
     public function employee()
@@ -31,7 +30,6 @@ class Onboarding extends Model
         return $this->hasMany(OnboardingTask::class, 'onboarding_id', 'onboarding_id');
     }
 
-    // Helper to calculate progress % for the dashboard
     public function getProgressAttribute()
     {
         $total = $this->tasks->count();
@@ -39,5 +37,38 @@ class Onboarding extends Model
 
         $completed = $this->tasks->where('is_completed', true)->count();
         return round(($completed / $total) * 100);
+    }
+
+    // ======================================================
+    // NEW: REUSABLE ONBOARDING GENERATOR
+    // Tell your friend to call \App\Models\Onboarding::generateForNewEmployee($emp_id, $admin_id)
+    // ======================================================
+    public static function generateForNewEmployee($employeeId, $adminId)
+    {
+        $onboarding = self::create([
+            'employee_id' => $employeeId,
+            'assigned_by' => $adminId, 
+            'start_date'  => now(),
+            'end_date'    => now()->addDays(7),
+            'status'      => 'pending'
+        ]);
+
+        $defaultTasks = [
+            ['name' => 'Submit Identity Documents',   'cat' => 'HR Docs'],
+            ['name' => 'Sign Employment Contract',    'cat' => 'Legal'],
+            ['name' => 'Setup Corporate Email',       'cat' => 'IT Setup'],
+            ['name' => 'Attend Company Orientation',  'cat' => 'Training'],
+            ['name' => 'Meet Reporting Manager',      'cat' => 'Integration'],
+        ];
+
+        foreach ($defaultTasks as $task) {
+            \App\Models\OnboardingTask::create([
+                'onboarding_id' => $onboarding->onboarding_id,
+                'task_name'     => $task['name'],
+                'category'      => $task['cat'],
+                'is_completed'  => false,
+                'due_date'      => now()->addDays(5),
+            ]);
+        }
     }
 }

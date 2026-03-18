@@ -82,7 +82,7 @@
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-        <i class="fa-regular fa-bell"></i> &nbsp; {{ Auth::user()->name }}
+        <i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name }}</a>
     </div>
   </header>
 

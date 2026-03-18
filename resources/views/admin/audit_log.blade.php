@@ -219,7 +219,6 @@
     <div id="drawer-body"></div>
     <div class="drawer-actions">
       <button type="button" class="btn-close" id="drawer-close">Close</button>
-      <button type="button" class="btn-copy" id="drawer-copy-json">Copy JSON</button>
     </div>
   </div>
 </div>
@@ -253,7 +252,6 @@
   const drawer = document.getElementById('drawer');
   const drawerBody = document.getElementById('drawer-body');
   const drawerClose = document.getElementById('drawer-close');
-  const drawerCopyJson = document.getElementById('drawer-copy-json');
 
   filterDateRange.addEventListener('change', function() {
     customDates.style.display = this.value === 'custom' ? 'block' : 'none';
@@ -363,9 +361,10 @@
         state.detailJson = log;
         let metaHtml = '';
         const meta = log.metadata || {};
-        if (Object.keys(meta).length) {
+        const metaEntries = Object.entries(meta || {}).filter(([k]) => String(k).toLowerCase() !== 'ip');
+        if (metaEntries.length) {
           metaHtml = '<div class="detail-row"><div class="detail-label">Metadata</div><table class="meta-table"><tbody>' +
-            Object.entries(meta).map(([k, v]) => '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v)) + '</td></tr>').join('') +
+            metaEntries.map(([k, v]) => '<tr><th>' + escapeHtml(k) + '</th><td>' + escapeHtml(typeof v === 'object' ? JSON.stringify(v) : String(v)) + '</td></tr>').join('') +
             '</tbody></table></div>';
         }
         drawerBody.innerHTML =
@@ -414,16 +413,6 @@
   pageSize.addEventListener('change', () => { state.per_page = parseInt(pageSize.value, 10); state.page = 1; load(); });
   drawerOverlay.addEventListener('click', closeDrawer);
   drawerClose.addEventListener('click', closeDrawer);
-  drawerCopyJson.addEventListener('click', () => {
-    if (state.detailJson && navigator.clipboard) {
-      const safe = { ...state.detailJson };
-      if (safe.metadata) {
-        delete safe.metadata.embedding;
-        delete safe.metadata.embeddings;
-      }
-      navigator.clipboard.writeText(JSON.stringify(safe, null, 2));
-    }
-  });
 
   load();
 })();

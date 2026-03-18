@@ -60,6 +60,8 @@
     .pending { background:#fff7ed; color:#c05621; border:1px solid #fed7aa; }
     .approved { background:#ecfdf3; color:#15803d; border:1px solid #bbf7d0; }
     .hold { background:#eef2ff; color:#4338ca; border:1px solid #c7d2fe; }
+    .issue-badge { background:#fef3c7; color:#92400e; border:1px solid #fcd34d; font-size:12px; padding:4px 8px; border-radius:6px; }
+    .no-issue { color:#94a3b8; font-size:12px; }
 
     .btn {
       border:none;
@@ -97,26 +99,45 @@
         <p>Review and act on employee overtime requests currently pending approval.</p>
       </div>
 
+      @if(isset($pendingAdmin) || isset($flaggedPending))
+      <div class="grid-cards" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:20px;">
+        <div class="mini-card" style="background:#dbeafe; border-radius:10px; padding:12px; text-align:center;">
+          <div class="num" style="font-size:24px; font-weight:700; color:#1e40af;">{{ $pendingAdmin ?? 0 }}</div>
+          <div class="label" style="font-size:12px; color:#1e40af;">Pending Admin</div>
+        </div>
+        <div class="mini-card" style="background:#fef3c7; border-radius:10px; padding:12px; text-align:center;">
+          <div class="num" style="font-size:24px; font-weight:700; color:#b45309;">{{ $flaggedPending ?? 0 }}</div>
+          <div class="label" style="font-size:12px; color:#b45309;">Flagged Pending</div>
+        </div>
+        <div class="mini-card" style="background:#dcfce7; border-radius:10px; padding:12px; text-align:center;">
+          <div class="num" style="font-size:24px; font-weight:700; color:#15803d;">{{ $approvedAdmin ?? 0 }}</div>
+          <div class="label" style="font-size:12px; color:#15803d;">Approved</div>
+        </div>
+        <div class="mini-card" style="background:#fee2e2; border-radius:10px; padding:12px; text-align:center;">
+          <div class="num" style="font-size:24px; font-weight:700; color:#991b1b;">{{ ($rejectedSupervisor ?? 0) + ($rejectedAdmin ?? 0) }}</div>
+          <div class="label" style="font-size:12px; color:#991b1b;">Rejected (Sup + Admin)</div>
+        </div>
+      </div>
+      @endif
+
       <div class="page-box">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
           <div>
-            <h3 style="margin:0 0 4px;">Pending Overtime Requests</h3>
-            <p style="margin:0; color:#6b7280;">Approve, reject, or hold overtime claims with quick filters.</p>
+            <h3 style="margin:0 0 4px;">Pending Admin (OT Requests)</h3>
+            <p style="margin:0; color:#6b7280;">Review overtime requests approved by supervisors. Toggle &quot;Flagged&quot; to see those marked for careful review.</p>
           </div>
           <div class="toolbar">
             <input type="text" id="search" placeholder="Search employee...">
 
+            <select id="reviewFilter">
+              <option value="all">All</option>
+              <option value="flagged">Flagged only</option>
+            </select>
             <select id="dept">
               <option value="">All Departments</option>
               @foreach($departments as $dept)
                 <option value="{{ $dept->department_id }}">{{ $dept->department_name }}</option>
               @endforeach
-            </select>
-            <select id="status">
-              <option value="">All Status</option>
-              <option value="pending">Pending</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
             </select>
             <select id="range">
               <option value="">Any Date</option>
@@ -130,17 +151,38 @@
           <thead>
             <tr>
               <th>Employee</th>
-              <th>Department</th>
+              <th>Dept</th>
+              <th>Supervisor</th>
               <th>Date</th>
               <th>Hours</th>
               <th>Reason</th>
-              <th>Status</th>
+              <th>Issue</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
       </div>
+
+      <section class="pagination-wrap" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:12px;">
+        <span id="paginationInfo">0 records</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button type="button" class="btn btn-ghost" id="firstPage" disabled><i class="fa-solid fa-angles-left"></i> First</button>
+          <button type="button" class="btn btn-ghost" id="prevPage" disabled>Prev</button>
+          <span id="pageNum">Page 1 of 1</span>
+          <button type="button" class="btn btn-ghost" id="nextPage" disabled>Next</button>
+          <button type="button" class="btn btn-ghost" id="lastPage" disabled>Last <i class="fa-solid fa-angles-right"></i></button>
+        </div>
+        <div>
+          <label>Show </label>
+          <select id="perPage">
+            <option value="10">10</option>
+            <option value="25" selected>25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </section>
 
       <footer style="margin-top:16px; text-align:center; color:#94a3b8; font-size:12px;">Ac 2025 Web-Based HRMS. All Rights Reserved.</footer>
     </main>
@@ -152,11 +194,31 @@
     const tbody   = document.querySelector('#ot-table tbody');
     const search  = document.getElementById('search');
     const dept    = document.getElementById('dept');
-    const status  = document.getElementById('status');
     const range   = document.getElementById('range');
-    const CSRF    = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    function getCSRF() {
+      const meta = document.querySelector('meta[name="csrf-token"]');
+      return (meta && meta.getAttribute('content')) || '';
+    }
     const ENDPOINT_LIST   = "{{ route('admin.payroll.overtime.data') }}";
     const ENDPOINT_STATUS = (id) => "{{ route('admin.payroll.overtime.status', ['overtime' => '__ID__']) }}".replace('__ID__', id);
+    let currentPage = 1;
+    let perPage = 25;
+    let pagination = { total: 0, last_page: 1, current_page: 1 };
+
+    function updatePagination() {
+      const el = document.getElementById('paginationInfo');
+      const num = document.getElementById('pageNum');
+      if (el) el.textContent = (pagination.total || 0) + ' records';
+      if (num) num.textContent = 'Page ' + (pagination.current_page || 1) + ' of ' + (pagination.last_page || 1);
+      const prevBtn = document.getElementById('prevPage');
+      const nextBtn = document.getElementById('nextPage');
+      const firstBtn = document.getElementById('firstPage');
+      const lastBtn = document.getElementById('lastPage');
+      if (prevBtn) prevBtn.disabled = (pagination.current_page || 1) <= 1;
+      if (nextBtn) nextBtn.disabled = (pagination.current_page || 1) >= (pagination.last_page || 1);
+      if (firstBtn) firstBtn.disabled = (pagination.current_page || 1) <= 1;
+      if (lastBtn) lastBtn.disabled = (pagination.current_page || 1) >= (pagination.last_page || 1);
+    }
 
     function rangeToDates(key) {
       const now = new Date();
@@ -172,59 +234,66 @@
       return { start:'', end:'' };
     }
 
+    const reviewFilter = document.getElementById('reviewFilter');
+
     async function loadData() {
-      tbody.innerHTML = '<tr><td colspan="7">Loading...</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8">Loading...</td></tr>';
 
       const { start, end } = rangeToDates(range.value);
       const params = new URLSearchParams({
         q: search.value.trim(),
         department: dept.value,
-        status: status.value,
+        review_filter: reviewFilter ? reviewFilter.value : 'all',
         start,
         end,
+        page: String(currentPage),
+        per_page: String(perPage),
       });
 
       try {
         const resp = await fetch(`${ENDPOINT_LIST}?${params.toString()}`, { headers: { 'Accept': 'application/json' }});
         if (!resp.ok) throw new Error('Unable to load overtime records');
         const json = await resp.json();
-        renderTable(Array.isArray(json.data) ? json.data : []);
+        const rows = Array.isArray(json.data) ? json.data : [];
+        pagination = json.pagination || { total: 0, last_page: 1, current_page: 1, per_page: perPage };
+        currentPage = pagination.current_page || 1;
+        if (pagination.per_page) perPage = pagination.per_page;
+        const perPageEl = document.getElementById('perPage');
+        if (perPageEl && perPageEl.value !== String(perPage)) perPageEl.value = String(perPage);
+        renderTable(rows);
+        updatePagination();
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7">Error: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8">Error: ${err.message}</td></tr>`;
       }
-    }
-
-    function statusBadge(status) {
-      const s = status.toLowerCase();
-      if (s === 'approved') return 'approved';
-      if (s === 'rejected') return 'hold';
-      return 'pending';
     }
 
     function renderTable(rows) {
       tbody.innerHTML = '';
       if (!rows.length) {
-        tbody.innerHTML = '<tr><td colspan="7">No overtime requests found.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8">No pending admin requests. All listed here have final_status = PENDING_ADMIN.</td></tr>';
         return;
       }
 
       rows.forEach(item => {
-
-        const badge = statusBadge(item.status);
+        let issueCell = '<span class="no-issue">—</span>';
+        if (item.has_issue) {
+          const remark = (item.issue_remark || '').replace(/"/g, '&quot;');
+          const shortRemark = (item.issue_remark || '').substring(0, 40) + ((item.issue_remark || '').length > 40 ? '…' : '');
+          issueCell = '<span class="issue-badge" title="' + (remark || 'Flagged for review') + '">Flagged</span>';
+          if (item.issue_remark) issueCell += '<br><small style="color:#78716c;">' + shortRemark + '</small>';
+        }
         const tr = document.createElement('tr');
         tr.innerHTML = `
           <td><strong>${item.employee}</strong><br><span style="color:#6b7280;">${item.code}</span></td>
           <td>${item.dept}</td>
+          <td>${item.supervisor || '—'}</td>
           <td>${item.date}</td>
           <td>${item.hours}</td>
           <td>${item.reason ?? '-'}</td>
-          <td><span class="status ${badge}">${item.status}</span></td>
+          <td>${issueCell}</td>
           <td>
-            ${item.status.toLowerCase() === 'pending'
-              ? `<button class="btn btn-approve" data-id="${item.ot_id}" data-action="approve"><i class="fa-solid fa-check"></i> Approve</button>
-                 <button class="btn btn-reject" data-id="${item.ot_id}" data-action="reject"><i class="fa-solid fa-xmark"></i> Reject</button>`
-              : `<button class="btn btn-view" data-id="${item.ot_id}" data-action="view"><i class="fa-regular fa-eye"></i> View</button>`
-            }
+            <button class="btn btn-approve" data-id="${item.ot_id}" data-action="approve"><i class="fa-solid fa-check"></i> Approve</button>
+            <button class="btn btn-reject" data-id="${item.ot_id}" data-action="reject"><i class="fa-solid fa-xmark"></i> Reject</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -246,14 +315,24 @@
           btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
 
           try {
+            const token = getCSRF();
+            if (!token) {
+              alert('Session expired or invalid. Please refresh the page and try again.');
+              return;
+            }
+            let comment = '';
+            if (action === 'reject') {
+              comment = prompt('Reason for rejection (optional):') || '';
+            }
             const resp = await fetch(ENDPOINT_STATUS(id), {
               method: 'POST',
               headers: {
-                'X-CSRF-TOKEN': CSRF,
+                'X-CSRF-TOKEN': token,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json',
               },
-              body: JSON.stringify({ action }),
+              body: JSON.stringify({ action, comment, _token: token }),
+              credentials: 'same-origin',
             });
             if (!resp.ok) throw new Error(await resp.text() || 'Update failed');
             await loadData();
@@ -268,7 +347,15 @@
     }
 
 
-    [search, dept, status, range].forEach(el => el.addEventListener('input', loadData));
+    search.addEventListener('input', () => { currentPage = 1; loadData(); });
+    if (reviewFilter) reviewFilter.addEventListener('change', () => { currentPage = 1; loadData(); });
+    dept.addEventListener('change', () => { currentPage = 1; loadData(); });
+    range.addEventListener('change', () => { currentPage = 1; loadData(); });
+    document.getElementById('firstPage').addEventListener('click', () => { if (currentPage > 1) { currentPage = 1; loadData(); } });
+    document.getElementById('prevPage').addEventListener('click', () => { if (currentPage > 1) { currentPage--; loadData(); } });
+    document.getElementById('nextPage').addEventListener('click', () => { if (currentPage < (pagination.last_page || 1)) { currentPage++; loadData(); } });
+    document.getElementById('lastPage').addEventListener('click', () => { if (currentPage < (pagination.last_page || 1)) { currentPage = pagination.last_page; loadData(); } });
+    document.getElementById('perPage').addEventListener('change', function() { perPage = parseInt(this.value, 10); currentPage = 1; loadData(); });
 
     loadData();
   });

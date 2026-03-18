@@ -22,6 +22,9 @@
     .btn-secondary { background:#64748b; color:#fff; }
     .form-check { display:flex; align-items:center; gap:8px; }
     .form-check input { width:18px; height:18px; }
+    table input[type="checkbox"]#selectAll,
+    table input[type="checkbox"].row-select,
+    table input[type="checkbox"].flag-checkbox { transform:scale(1.6); cursor:pointer; accent-color:#6366f1; }
     .remark-input { width:100%; max-width:220px; padding:6px 10px; border:1px solid #e5e7eb; border-radius:6px; font-size:13px; }
     .help { color:#64748b; font-size:13px; margin-top:8px; }
     .badge { font-size:12px; padding:4px 8px; border-radius:999px; font-weight:600; }
@@ -31,12 +34,16 @@
 <body>
   <header>
     <div class="title">Web-Based HRMS</div>
-    <div class="user-info"><i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name ?? 'User' }}</a></div>
+    <div class="user-info"><i class="fa-regular fa-bell"></i> &nbsp;
+      <a href="{{ route('supervisor.profile') }}" style="color:inherit; text-decoration:none;">
+        {{ Auth::user()->name ?? 'Supervisor' }}
+      </a>
+    </div>
   </header>
   <div class="container">
-    @include('employee.layout.sidebar')
+    @include('supervisor.layout.sidebar')
     <main>
-      <div class="breadcrumb">Employee · OT Requests · Send Summary to Admin</div>
+      <div class="breadcrumb">Supervisor · OT Requests · Send Summary to Admin</div>
       <h2 style="margin:0 0 4px;">Send Approval Summary to Admin</h2>
       <p style="margin:0; color:#64748b;">Review your approved OT requests, optionally flag items that need admin attention, then send the full summary to admin.</p>
 

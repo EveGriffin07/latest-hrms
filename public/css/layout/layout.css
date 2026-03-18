@@ -111,6 +111,17 @@ header .user-info {
   transform: rotate(90deg);
 }
 
+/* Supervisor OT Claims: downward chevron when expanded (like reference design) */
+.sidebar-group-ot .sidebar-toggle .arrow {
+  transition: transform 0.2s;
+}
+.sidebar-group-ot .sidebar-toggle .arrow {
+  transform: rotate(-90deg);
+}
+.sidebar-group-ot.open .sidebar-toggle .arrow {
+  transform: rotate(0deg);
+}
+
 /* Sidebar submenu */
 .submenu {
   list-style: none;
@@ -138,6 +149,27 @@ header .user-info {
 .submenu li a:hover,
 .submenu li a.active {
   background-color: #111827;
+  color: #ffffff;
+}
+
+/* OT Claims submenu: dark rectangular buttons, white text, clear indentation */
+.submenu-ot {
+  margin-left: 12px;
+  margin-top: 6px;
+  padding-left: 8px;
+  border-left: 2px solid #374151;
+}
+.submenu-ot li a {
+  background-color: #0f172a;
+  color: #e5e7eb;
+  padding: 10px 16px;
+  border-radius: 8px;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+.submenu-ot li a:hover,
+.submenu-ot li a.active {
+  background-color: #1e3a8a;
   color: #ffffff;
 }
 

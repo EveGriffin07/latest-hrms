@@ -14,16 +14,13 @@ class OnboardingController extends Controller
     {
         $query = Onboarding::with(['employee.user', 'employee.department', 'tasks']);
 
-        // Filter: Department
         if ($request->has('department') && $request->department != 'All Departments') {
             $query->whereHas('employee.department', function($q) use ($request) {
                 $q->where('department_name', $request->department);
             });
         }
 
-        // Filter: Status (Handle lowercase mapping if filter sends 'In Progress')
-        if ($request->has('status') && $request->status != 'All Status') {
-            // Map the filter input to DB format if needed, or assume value is passed correctly
+        if ($request->has('status') && $request->status != 'All Statuses') {
             $status = match($request->status) {
                 'In Progress' => 'in_progress',
                 'Completed' => 'completed',
@@ -33,25 +30,30 @@ class OnboardingController extends Controller
             $query->where('status', $status);
         }
 
-        // Date Filters
-        if ($request->filled('start_date')) {
-            $query->whereDate('start_date', '>=', $request->start_date);
-        }
-        if ($request->filled('end_date')) {
-            $query->whereDate('end_date', '<=', $request->end_date);
-        }
-
         $onboardings = $query->latest()->get();
 
-        // --- STATS CALCULATION (FIXED) ---
-        // Use lowercase values to match database
-        $allOnboardings = Onboarding::all();
-        
+        $onboardings->each(function($onboarding) {
+            $total = $onboarding->tasks->count();
+            $completed = $onboarding->tasks->where('is_completed', true)->count();
+            
+            if ($total > 0) {
+                $newStatus = 'in_progress';
+                if ($completed === 0) $newStatus = 'pending';
+                elseif ($completed === $total) $newStatus = 'completed';
+                
+                if ($onboarding->status !== $newStatus) {
+                    $onboarding->status = $newStatus;
+                    $onboarding->saveQuietly();
+                }
+            }
+            $onboarding->progress = $total > 0 ? round(($completed / $total) * 100) : 0;
+        });
+
         $stats = [
-            'total'       => $allOnboardings->count(),
-            'in_progress' => $allOnboardings->where('status', 'in_progress')->count(),
-            'completed'   => $allOnboardings->where('status', 'completed')->count(),
-            'pending'     => $allOnboardings->where('status', 'pending')->count(),
+            'total'       => $onboardings->count(),
+            'in_progress' => $onboardings->where('status', 'in_progress')->count(),
+            'completed'   => $onboardings->where('status', 'completed')->count(),
+            'pending'     => $onboardings->where('status', 'pending')->count(),
         ];
 
         return view('admin.onboarding_admin', compact('onboardings', 'stats'));
@@ -59,60 +61,108 @@ class OnboardingController extends Controller
 
     public function showChecklist($id)
     {
-        $onboarding = Onboarding::with(['employee.user', 'employee.position', 'employee.department', 'tasks'])
-                                ->findOrFail($id);
+        $onboarding = Onboarding::with(['employee.user', 'employee.position', 'employee.department', 'tasks'])->findOrFail($id);
 
         $totalTasks = $onboarding->tasks->count();
         $completedTasks = $onboarding->tasks->where('is_completed', true)->count();
         $pendingTasks = $totalTasks - $completedTasks;
-        
-        $overdueTasks = $onboarding->tasks->where('is_completed', false)
-                                          ->where('due_date', '<', now())
-                                          ->count();
+        $overdueTasks = $onboarding->tasks->where('is_completed', false)->where('due_date', '<', now())->count();
+        $onboarding->progress = $totalTasks > 0 ? round(($completedTasks / $totalTasks) * 100) : 0;
 
-        return view('admin.onboarding_checklist', compact(
-            'onboarding', 'totalTasks', 'completedTasks', 'pendingTasks', 'overdueTasks'
-        ));
+        return view('admin.onboarding_checklist', compact('onboarding', 'totalTasks', 'completedTasks', 'pendingTasks', 'overdueTasks'));
     }
 
     public function create()
     {
-        $employees = Employee::with(['user', 'department', 'position'])->get();
-        return view('admin.onboarding_add', compact('employees'));
+        // Fetch employees without active onboarding
+        $employees = Employee::with(['user', 'department', 'position'])
+            ->whereDoesntHave('onboarding', function($query) {
+                $query->whereIn('status', ['pending', 'in_progress']);
+            })->get();
+
+        // Fetch active managers/supervisors to populate the dropdown
+        $supervisors = Employee::with(['user', 'department', 'position'])
+            ->whereHas('position', function($q) {
+                $q->where('is_manager', 1);
+            })->get(); 
+
+        return view('admin.onboarding_add', compact('employees', 'supervisors'));
     }
 
     public function store(Request $request)
     {
         $request->validate([
-            'employee_id' => 'required|exists:employees,employee_id',
-            'startDate'   => 'required|date',
-            'deadline'    => 'required|date|after_or_equal:startDate',
+            'employee_id'   => 'required|exists:employees,employee_id',
+            'supervisor_id' => 'required|exists:employees,employee_id', // NEW VALIDATION
+            'startDate'     => 'required|date',
+            'deadline'      => 'required|date|after_or_equal:startDate',
         ]);
 
-        // FIXED: Use 'pending' (lowercase)
+        $employee = Employee::findOrFail($request->employee_id);
+
+        // === OFFICIALLY SET THE REPORTING STRUCTURE IN THE DB ===
+        $employee->update([
+            'supervisor_id' => $request->supervisor_id
+        ]);
+        
+        // Reload to get the new supervisor's details for the task generation
+        $employee->load('supervisor.user');
+
         $onboarding = Onboarding::create([
-            'employee_id' => $request->employee_id,
+            'employee_id' => $employee->employee_id,
             'assigned_by' => Auth::id(),
             'start_date'  => $request->startDate,
             'end_date'    => $request->deadline,
             'status'      => 'pending' 
         ]);
 
+        if ($request->has('assets')) {
+            foreach ($request->assets as $asset) {
+                OnboardingTask::create([
+                    'onboarding_id' => $onboarding->onboarding_id,
+                    'task_name'     => 'Provision Company ' . ucfirst($asset),
+                    'category'      => 'IT & Assets',
+                    'is_completed'  => false,
+                    'due_date'      => $request->startDate,
+                ]);
+            }
+        }
+
+        if ($request->has('access')) {
+            foreach ($request->access as $system) {
+                OnboardingTask::create([
+                    'onboarding_id' => $onboarding->onboarding_id,
+                    'task_name'     => 'Create Account: ' . $system,
+                    'category'      => 'IT & Security',
+                    'is_completed'  => false,
+                    'due_date'      => $request->startDate,
+                ]);
+            }
+        }
+
+        // Auto-Generate Supervisor Meeting Task using the newly assigned Supervisor
+        $supervisorName = $employee->supervisor ? $employee->supervisor->user->name : 'Department Manager';
+        OnboardingTask::create([
+            'onboarding_id' => $onboarding->onboarding_id,
+            'task_name'     => 'Introductory Meeting with Supervisor: ' . $supervisorName,
+            'category'      => 'Culture & Team',
+            'is_completed'  => false,
+            'due_date'      => $request->deadline,
+        ]);
+
         if ($request->has('default_tasks')) {
             foreach ($request->default_tasks as $taskCode) {
                 $taskName = match($taskCode) {
-                    'documents'   => 'Submit required documents',
-                    'orientation' => 'Attend company orientation',
-                    'system'      => 'Setup system credentials',
-                    'buddy'       => 'Meet assigned buddy / mentor',
-                    'policies'    => 'Review and acknowledge HR policies',
+                    'documents'   => 'Collect Signed HR Documents & ID',
+                    'orientation' => 'Complete Company Welcome Orientation',
+                    'policies'    => 'Review Employee Handbook & Policies',
                     default       => 'General Task'
                 };
 
                 OnboardingTask::create([
                     'onboarding_id' => $onboarding->onboarding_id,
                     'task_name'     => $taskName,
-                    'category'      => 'General',
+                    'category'      => 'HR & Compliance',
                     'is_completed'  => false,
                     'due_date'      => $request->deadline,
                 ]);
@@ -122,15 +172,14 @@ class OnboardingController extends Controller
         if ($request->filled('customTask')) {
             OnboardingTask::create([
                 'onboarding_id' => $onboarding->onboarding_id,
-                'task_name'     => 'Custom: ' . substr($request->customTask, 0, 20) . '...',
+                'task_name'     => 'Custom: ' . substr($request->customTask, 0, 30) . '...',
                 'remarks'       => $request->customTask,
-                'category'      => 'Custom',
+                'category'      => 'Manager Task',
                 'is_completed'  => false,
                 'due_date'      => $request->deadline,
             ]);
         }
 
-        return redirect()->route('admin.onboarding')
-                         ->with('success', 'Onboarding assigned successfully!');
+        return redirect()->route('admin.onboarding')->with('success', 'Reporting structure updated and checklist generated successfully!');
     }
 }

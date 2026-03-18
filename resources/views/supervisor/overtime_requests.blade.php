@@ -25,12 +25,16 @@
 <body>
   <header>
     <div class="title">Web-Based HRMS</div>
-    <div class="user-info"><i class="fa-regular fa-bell"></i> &nbsp; <a href="{{ route('employee.profile') }}" style="color:inherit; text-decoration:none;">{{ Auth::user()->name ?? 'User' }}</a></div>
+    <div class="user-info"><i class="fa-regular fa-bell"></i> &nbsp;
+      <a href="{{ route('supervisor.profile') }}" style="color:inherit; text-decoration:none;">
+        {{ Auth::user()->name ?? 'Supervisor' }}
+      </a>
+    </div>
   </header>
   <div class="container">
-    @include('employee.layout.sidebar')
+    @include('supervisor.layout.sidebar')
     <main>
-      <div class="breadcrumb">Employee · OT Requests</div>
+      <div class="breadcrumb">Supervisor · OT Requests</div>
       <h2 style="margin:0 0 4px;">OT Requests</h2>
       <p style="margin:0; color:#64748b;">Approve or reject overtime requests from your team. After you approve, HR will do final approval.</p>
 
@@ -75,7 +79,7 @@
                 <td>{{ $r->reason ?? '—' }}</td>
                 <td>
                   @if($r->final_status === \App\Models\OvertimeRecord::FINAL_PENDING_SUPERVISOR)
-                    <span class="badge badge-pending">Pending you</span>
+                    <span class="badge badge-pending">Pending</span>
                   @elseif($r->final_status === \App\Models\OvertimeRecord::FINAL_PENDING_ADMIN)
                     <span class="badge" style="background:#dbeafe; color:#1e40af;">Pending admin</span>
                     @if($r->flagged_for_admin)

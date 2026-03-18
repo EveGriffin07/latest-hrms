@@ -11,8 +11,14 @@ class Department extends Model
     protected $primaryKey = 'department_id';
     protected $guarded = [];
 
-    // Relationship: One Department has many Employees
-    public function employees() {
+    public function employees()
+    {
         return $this->hasMany(Employee::class, 'department_id');
+    }
+
+    /** Department manager (user who approves OT/claims for this dept). */
+    public function manager()
+    {
+        return $this->belongsTo(User::class, 'manager_id', 'user_id');
     }
 }

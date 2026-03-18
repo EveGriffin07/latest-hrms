@@ -130,6 +130,7 @@
               <div class="seg" id="segView">
                 <button type="button" data-view="week" class="active">Week</button>
                 <button type="button" data-view="month">Month</button>
+                <button type="button" data-view="custom">Custom</button>
               </div>
               <div class="toolbar">
                 <button type="button" class="btn btn-ghost btn-icon" id="prevPeriod"><i class="fa-solid fa-chevron-left"></i> Prev</button>
@@ -172,6 +173,26 @@
           </thead>
           <tbody><!-- JS fills --></tbody>
         </table>
+      </section>
+
+      <!-- Pagination -->
+      <section class="pagination-wrap" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-top:12px;">
+        <span class="pagination-info" id="paginationInfo">0 records</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <button type="button" class="btn btn-ghost btn-icon" id="firstPage" disabled><i class="fa-solid fa-angles-left"></i> First</button>
+          <button type="button" class="btn btn-ghost btn-icon" id="prevPage" disabled>Prev</button>
+          <span id="pageNum">Page 1 of 1</span>
+          <button type="button" class="btn btn-ghost btn-icon" id="nextPage" disabled>Next</button>
+          <button type="button" class="btn btn-ghost btn-icon" id="lastPage" disabled>Last <i class="fa-solid fa-angles-right"></i></button>
+        </div>
+        <div>
+          <label>Show </label>
+          <select id="perPage">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
       </section>
 
       <footer>© 2025 Web-Based HRMS. All Rights Reserved.</footer>
@@ -225,6 +246,9 @@ document.addEventListener('DOMContentLoaded', function () {
 
   const initialStart = "{{ $start ?? '' }}";
   const initialEnd   = "{{ $end ?? '' }}";
+  let currentPage = 1;
+  let perPage = 25;
+  let pagination = { total: 0, last_page: 1 };
 
   // Clear any server-side default actives so JS owns it (prevents double highlight)
   groups.forEach(g => {
@@ -352,6 +376,7 @@ document.addEventListener('DOMContentLoaded', function () {
   let range = getWeekRange(anchor); // [start, end]
 
   function setRangeFromView() {
+    if (view === 'custom') return;
     range = (view === 'week') ? getWeekRange(anchor) : getMonthRange(anchor);
     $('#start').value = ymd(range[0]);
     $('#end').value = ymd(range[1]);
@@ -362,8 +387,17 @@ document.addEventListener('DOMContentLoaded', function () {
     if (initialStart) $('#start').value = initialStart;
     if (initialEnd) $('#end').value = initialEnd;
     if (!$('#start').value || !$('#end').value) {
+      view = 'week';
+      anchor = new Date();
       setRangeFromView();
     }
+  }
+
+  function setViewActive(v) {
+    view = v;
+    $$('#segView button').forEach(b => {
+      b.classList.toggle('active', b.dataset.view === view);
+    });
   }
 
   /* ---------- Rendering ---------- */
@@ -387,7 +421,7 @@ document.addEventListener('DOMContentLoaded', function () {
         <td>${r.in}</td>
         <td>${r.out}</td>
         <td>
-          <span class="status ${r.status.toLowerCase()}">${r.status}</span>
+          <span class="status ${(r.status||'').toLowerCase()}">${r.status_display || r.status || ''}</span>
         </td>
         <td>
           <button class="btn-small btn-view" data-id="${r.id}" data-name="${r.name}">View</button>
@@ -402,8 +436,22 @@ document.addEventListener('DOMContentLoaded', function () {
     $('#sum-total').textContent   = SUMMARY.total;
     $('#sum-present').textContent = SUMMARY.present;
     $('#sum-late').textContent    = SUMMARY.late;
-    // Absent card also counts approved leave so admins see all non-working cases
-    $('#sum-absent').textContent  = SUMMARY.absent + SUMMARY.leave;
+    $('#sum-absent').textContent  = (SUMMARY.absent || 0) + (SUMMARY.leave || 0);
+  }
+
+  function updatePagination() {
+    const el = document.getElementById('paginationInfo');
+    const num = document.getElementById('pageNum');
+    const prevBtn = document.getElementById('prevPage');
+    const nextBtn = document.getElementById('nextPage');
+    if (el) el.textContent = (pagination.total || 0) + ' records';
+    if (num) num.textContent = 'Page ' + (pagination.current_page || 1) + ' of ' + (pagination.last_page || 1);
+    if (prevBtn) prevBtn.disabled = (pagination.current_page || 1) <= 1;
+    if (nextBtn) nextBtn.disabled = (pagination.current_page || 1) >= (pagination.last_page || 1);
+    const firstBtn = document.getElementById('firstPage');
+    const lastBtn = document.getElementById('lastPage');
+    if (firstBtn) firstBtn.disabled = (pagination.current_page || 1) <= 1;
+    if (lastBtn) lastBtn.disabled = (pagination.current_page || 1) >= (pagination.last_page || 1);
   }
 
   /* ---------- Fetch & Filtering ---------- */
@@ -419,6 +467,8 @@ document.addEventListener('DOMContentLoaded', function () {
       status: $('#status').value,
       start: $('#start').value,
       end: $('#end').value,
+      page: String(currentPage),
+      per_page: String(perPage),
     });
 
     try {
@@ -427,8 +477,14 @@ document.addEventListener('DOMContentLoaded', function () {
       const json = await resp.json();
       DATA = Array.isArray(json.data) ? json.data : [];
       SUMMARY = json.summary || SUMMARY;
+      pagination = json.pagination || { total: 0, last_page: 1, current_page: 1, per_page: perPage };
+      currentPage = pagination.current_page || 1;
+      if (pagination.per_page) perPage = pagination.per_page;
+      const perPageEl = document.getElementById('perPage');
+      if (perPageEl && perPageEl.value !== String(perPage)) perPageEl.value = String(perPage);
       renderTable(DATA);
       updateSummary();
+      updatePagination();
       wireViewButtons();
     } catch (err) {
       console.error(err);
@@ -441,35 +497,70 @@ document.addEventListener('DOMContentLoaded', function () {
 
   /* ---------- Period Controls ---------- */
   function shiftPeriod(delta=0) {
-    if (view === 'week') {
+    if (view === 'custom') {
+      const s = new Date($('#start').value);
+      const e = new Date($('#end').value);
+      const days = Math.round((e - s) / 86400000) + 1;
+      s.setDate(s.getDate() + delta * days);
+      e.setDate(e.getDate() + delta * days);
+      $('#start').value = ymd(s);
+      $('#end').value = ymd(e);
+    } else if (view === 'week') {
       anchor.setDate(anchor.getDate() + delta*7);
+      setRangeFromView();
     } else {
       anchor.setMonth(anchor.getMonth() + delta);
+      setRangeFromView();
     }
-    setRangeFromView();
+    currentPage = 1;
     applyFilters();
   }
 
   document.getElementById('prevPeriod').addEventListener('click', ()=> shiftPeriod(-1));
   document.getElementById('nextPeriod').addEventListener('click', ()=> shiftPeriod(+1));
-  document.getElementById('thisPeriod').addEventListener('click', ()=> { anchor = new Date(); setRangeFromView(); applyFilters(); });
+  document.getElementById('thisPeriod').addEventListener('click', ()=> {
+    view = 'week';
+    anchor = new Date();
+    setRangeFromView();
+    setViewActive('week');
+    currentPage = 1;
+    applyFilters();
+  });
 
   document.querySelectorAll('#segView button').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       document.querySelectorAll('#segView button').forEach(b=>b.classList.remove('active'));
       btn.classList.add('active');
       view = btn.dataset.view;
-      setRangeFromView();
+      if (view !== 'custom') setRangeFromView();
+      currentPage = 1;
       applyFilters();
     });
   });
 
-  document.getElementById('applyFilters').addEventListener('click', applyFilters);
+  $('#start').addEventListener('change', function(){ setViewActive('custom'); });
+  $('#end').addEventListener('change', function(){ setViewActive('custom'); });
+
+  document.getElementById('applyFilters').addEventListener('click', ()=>{ currentPage = 1; applyFilters(); });
   document.getElementById('clearFilters').addEventListener('click', ()=>{
     document.getElementById('search').value='';
     document.getElementById('department').value='';
     document.getElementById('status').value='';
+    view = 'week';
+    anchor = new Date();
     setRangeFromView();
+    currentPage = 1;
+    document.querySelectorAll('#segView button').forEach(b=>b.classList.toggle('active', b.dataset.view === 'week'));
+    applyFilters();
+  });
+
+  document.getElementById('firstPage').addEventListener('click', ()=>{ if (currentPage > 1) { currentPage = 1; applyFilters(); } });
+  document.getElementById('prevPage').addEventListener('click', ()=>{ if (currentPage > 1) { currentPage--; applyFilters(); } });
+  document.getElementById('nextPage').addEventListener('click', ()=>{ if (currentPage < (pagination.last_page||1)) { currentPage++; applyFilters(); } });
+  document.getElementById('lastPage').addEventListener('click', ()=>{ if (currentPage < (pagination.last_page||1)) { currentPage = pagination.last_page; applyFilters(); } });
+  document.getElementById('perPage').addEventListener('change', function(){
+    perPage = parseInt(this.value, 10);
+    currentPage = 1;
     applyFilters();
   });
 
@@ -500,7 +591,7 @@ document.addEventListener('DOMContentLoaded', function () {
         <td style="padding:10px;">${r.date}</td>
         <td style="padding:10px;">${r.in}</td>
         <td style="padding:10px;">${r.out}</td>
-        <td style="padding:10px;"><span class="status ${r.status.toLowerCase()}">${r.status}</span></td>
+        <td style="padding:10px;"><span class="status ${(r.status||'').toLowerCase()}">${r.status_display || r.status || ''}</span></td>
       </tr>
     `).join('') || `<tr><td colspan="4" style="padding:10px;">No records in range.</td></tr>`;
     modal.style.display = 'flex';

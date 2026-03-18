@@ -8,6 +8,7 @@ use App\Models\ApplicantProfile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Auth\Events\Registered; // 1. Import the Registered event
 
 class RegisterController extends Controller
 {
@@ -34,18 +35,20 @@ class RegisterController extends Controller
         ]);
 
         // 3. Create Profile
-        // NOW THIS WORKS: We send the email, and we don't need to send a phone.
         ApplicantProfile::create([
             'user_id'   => $user->user_id,
             'full_name' => $request->name,
-            'email'     => $request->email, // This is now allowed!
-            // 'phone'  => (We can skip this now because we made it nullable)
+            'email'     => $request->email,
         ]);
 
-        // 4. Login
+        // 4. Trigger the verification email
+        event(new Registered($user));
+
+        // 5. Login
         Auth::login($user);
 
-        return redirect()->route('applicant.jobs')
-                         ->with('success', 'Registration successful! Welcome.');
+        // Redirect to a notice page instead of directly to jobs
+        return redirect()->route('verification.notice')
+                         ->with('success', 'Registration successful! Please check your email to verify your account.');
     }
 }

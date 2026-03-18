@@ -52,6 +52,7 @@ class DepartmentPositionSeeder extends Seeder
             ],
             // General / Unassigned (Optional)
             'General' => [
+                'Supervisor',
                 'Intern',
                 'Office Assistant'
             ]

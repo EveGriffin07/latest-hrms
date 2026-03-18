@@ -16,6 +16,7 @@ class Penalty extends Model
         'assigned_at',
         'removed_at',
         'status',
+        'rejection_remark',
     ];
 
     protected $casts = [

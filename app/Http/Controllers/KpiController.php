@@ -5,212 +5,243 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
-use App\Models\KpiTemplate;
-use App\Models\DepartmentKpi;
-use App\Models\EmployeeKpi;
+use App\Models\Appraisal; 
 use App\Models\Department;
 use App\Models\Employee;
 
 class KpiController extends Controller
 {
-    // --- 1. DASHBOARD PAGE (Dynamic Data) ---
+    // =========================================================
+    // 1. DASHBOARD PAGE (Admin Overview)
+    // =========================================================
     public function index()
     {
-        // Counts for the Summary Cards
-        $totalEmployees = Employee::count();
-        $totalKpis      = KpiTemplate::count();
-        $underReview    = EmployeeKpi::where('kpi_status', 'in_progress')->count();
-        $completed      = EmployeeKpi::where('kpi_status', 'completed')->count();
+        $totalAppraisals = Appraisal::count();
+        $pendingManager  = Appraisal::where('status', 'pending_manager')->count();
+        $completed       = Appraisal::where('status', 'completed')->count();
+        
+        // Calculate the company-wide average score
+        $avgScoreRaw = Appraisal::where('status', 'completed')->avg('overall_score') ?? 0;
+        $avgScore = number_format($avgScoreRaw, 1);
 
-        // Fetch Department KPIs for the "Current KPI Goals" table
-        // We use 'with' to load the department name and template title
-        $deptKpis = DepartmentKpi::with(['department', 'template'])->take(5)->get();
+        // Fetch all appraisals to display in the table
+        $appraisals = Appraisal::with(['employee.user', 'employee.position', 'evaluator.user'])
+                               ->latest()
+                               ->get();
 
-        return view('admin.appraisal_admin', compact('totalEmployees', 'totalKpis', 'underReview', 'completed', 'deptKpis'));
+        return view('admin.appraisal_admin', compact('totalAppraisals', 'pendingManager', 'completed', 'avgScore', 'appraisals'));
     }
 
-    // --- 2. CREATE FORM (Already Done) ---
+    // =========================================================
+    // 2. CREATE FORM (Initiate New Review)
+    // =========================================================
     public function create()
     {
-        $departments = Department::all();
-        // Eager load 'user' and 'department' to avoid "Attempt to read property on null"
-        $employees   = Employee::with(['user', 'department'])->get();
+        // Fetch employees to populate the dropdowns
+        $employees = Employee::with(['user', 'department', 'position'])->get();
         
-        return view('admin.appraisal_add_kpi', compact('departments', 'employees'));
+        return view('admin.appraisal_add_kpi', compact('employees'));
     }
 
-    // --- 3. STORE LOGIC (Already Done) ---
+    // =========================================================
+    // 3. STORE RECORD (Save to Database)
+    // =========================================================
     public function store(Request $request)
     {
-        // 1. Validation
         $request->validate([
-            'kpiTitle' => 'required|string|max:255',
-            'kpiType'  => 'required',
-            'targetValue' => 'required|numeric',
-            'assignedTo' => 'required',
-            'startDate' => 'required|date',
-            'endDate'   => 'required|date|after_or_equal:startDate',
+            'employee_id'   => 'required|exists:employees,employee_id',
+            'evaluator_id'  => 'required|exists:employees,employee_id',
+            'review_period' => 'required|string|max:255',
         ]);
 
-        // 2. Use Transaction to ensure both Template and Assignment are saved
-        DB::transaction(function () use ($request) {
-            
-            // A. Create the Master Template
-            $template = KpiTemplate::create([
-                'kpi_title'       => $request->kpiTitle,
-                'kpi_description' => $request->kpiDescription,
-                'kpi_type'        => $request->kpiType,
-                'default_target'  => $request->targetValue,
-            ]);
+        // Prevent duplicate reviews for the same period
+        $exists = Appraisal::where('employee_id', $request->employee_id)
+                           ->where('review_period', $request->review_period)
+                           ->exists();
 
-            // B. Check who it is assigned to
-            if ($request->assignedTo === 'Employee') {
-                
-                // Create PERSONAL KPI
-                EmployeeKpi::create([
-                    'employee_id'   => $request->employee, // Value comes from the <select name="employee">
-                    'kpi_id'        => $template->kpi_id,
-                    
-                    // Map Form Dates to Database Columns
-                    'assigned_date' => $request->startDate, 
-                    'deadline'      => $request->endDate,
-                    
-                    'kpi_status'    => 'pending',
-                ]);
+        if ($exists) {
+            return redirect()->back()->with('error', 'This employee already has an active appraisal for this Review Period.');
+        }
 
-            } elseif ($request->assignedTo === 'Department') {
-                
-                // Create DEPARTMENT KPI
-                DepartmentKpi::create([
-                    'department_id' => $request->department,
-                    'kpi_id'        => $template->kpi_id,
-                    
-                    // Map Form Dates
-                    'period_start'  => $request->startDate,
-                    'period_end'    => $request->endDate,
-                    'deadline'      => $request->endDate,
-                    
-                    'target'        => $request->targetValue,
-                    'status'        => 'active',
-                    'user_id'       => Auth::id() ?? 1, // The Admin who created it
-                ]);
-            }
-        });
+        Appraisal::create([
+            'employee_id'   => $request->employee_id,
+            'evaluator_id'  => $request->evaluator_id,
+            'review_period' => $request->review_period,
+            'status'        => 'pending_self_eval' // Kicks off the workflow!
+        ]);
 
-        return redirect()->route('admin.appraisal')->with('success', 'KPI Goal Created Successfully!');
+        return redirect()->route('admin.appraisal')->with('success', 'Appraisal cycle initiated! The employee has been notified to complete their Self-Evaluation.');
     }
 
-    // --- 4. EMPLOYEE LIST PAGE ---
+    // =========================================================
+    // 4. MANAGER: Update & Finalize Score (1 to 5 Matrix)
+    // =========================================================
+    public function updateScore(Request $request, $id)
+    {
+        $request->validate([
+            'score_attendance'    => 'required|numeric|min:1|max:5',
+            'score_teamwork'      => 'required|numeric|min:1|max:5',
+            'score_productivity'  => 'required|numeric|min:1|max:5',
+            'score_communication' => 'required|numeric|min:1|max:5',
+            'manager_comments'    => 'required|string',
+        ]);
+
+        $appraisal = Appraisal::findOrFail($id);
+
+        // Auto-calculate the Overall Score Average
+        $overall = ($request->score_attendance + $request->score_teamwork + $request->score_productivity + $request->score_communication) / 4;
+
+        $appraisal->update([
+            'score_attendance'    => $request->score_attendance,
+            'score_teamwork'      => $request->score_teamwork,
+            'score_productivity'  => $request->score_productivity,
+            'score_communication' => $request->score_communication,
+            'overall_score'       => $overall,
+            'manager_comments'    => $request->manager_comments,
+            'status'              => 'completed' // Closes the review!
+        ]);
+
+        return redirect()->back()->with('success', 'Appraisal scored and finalized successfully!');
+    }
+
+    // =========================================================
+    // 5. EMPLOYEE LIST & DETAILS (Admin Views)
+    // =========================================================
     public function employeeList()
     {
-        // Get employees and count how many KPIs each has
-        $employees = Employee::with(['department', 'user'])->withCount('employeeKpis')->get();
-        
+        // Get employees and count how many appraisals they have
+        $employees = Employee::with(['department', 'user'])->withCount('appraisals')->get();
         return view('admin.appraisal_kpi_employee_list', compact('employees'));
     }
 
-    // --- 5. INDIVIDUAL EMPLOYEE KPI DETAILS ---
     public function showEmployeeKpis(Request $request)
     {
-        // Get employee ID from the URL (?emp=1)
         $empId = $request->query('emp');
-
-        // Find the employee or fail
         $employee = Employee::with(['department', 'user'])->findOrFail($empId);
+        
+        // Fetch the new appraisals instead of old EmployeeKpi
+        $appraisals = Appraisal::where('employee_id', $empId)->with('evaluator.user')->get();
 
-        // Get their KPIs
-        $kpis = EmployeeKpi::where('employee_id', $empId)->with('template')->get();
-
-        return view('admin.appraisal_kpi_employee', compact('employee', 'kpis'));
-    }
-    
-    // --- 6. UPDATE SCORE (For the Review Modal) ---
-    public function updateScore(Request $request, $id)
-    {
-        $kpi = EmployeeKpi::findOrFail($id);
-        $kpi->update([
-            'actual_score' => $request->score,
-            'kpi_status'   => $request->status,
-            'comments'     => $request->comment,
-        ]);
-
-        return back()->with('success', 'KPI Updated Successfully!');
+        return view('admin.appraisal_kpi_employee', compact('employee', 'appraisals'));
     }
 
-    public function showDepartmentKpi($id)
-    {
-        // 1. Fetch the Department KPI with its relationships
-        $deptKpi = DepartmentKpi::with(['department', 'template', 'creator'])->findOrFail($id);
-
-        // 2. (Optional) Fetch related Employee KPIs if your logic links them
-        // For now, we will just fetch employees in that same department to show the list
-        $employees = Employee::where('department_id', $deptKpi->department_id)
-                             ->with('user')
-                             ->withCount('employeeKpis')
-                             ->get();
-
-        return view('admin.appraisal_department_kpi', compact('deptKpi', 'employees'));
-    }
-
-    public function myKpis()
-    {
-        // 1. Get the currently logged-in User
-        $user = Auth::user();
-
-        // 2. Find their Employee Record
-        // (We assume the User model has an 'employee' relationship, or we query manually)
-        $employee = Employee::where('user_id', $user->user_id)->first();
-
-        if (!$employee) {
-            return redirect()->route('employee.dashboard')->with('error', 'Employee profile not found.');
-        }
-
-        // 3. Fetch their KPIs
-        $kpis = EmployeeKpi::where('employee_id', $employee->employee_id)
-                           ->with('template')
-                           ->get();
-
-        // 4. Return the view (we will create this next)
-        return view('employee.kpi_my_list', compact('employee', 'kpis'));
-    }
-
-    // --- 9. EMPLOYEE: Show Self-Evaluation Form ---
+    // =========================================================
+    // 6. EMPLOYEE: View their Appraisals
+    // =========================================================
     public function selfEvaluationList()
     {
-        $user = \Illuminate\Support\Facades\Auth::user();
-        // Assuming User links to Employee via 'user_id'
-        $employee = \App\Models\Employee::where('user_id', $user->user_id)->first();
+        $user = Auth::user();
+        $employee = Employee::where('user_id', $user->user_id ?? $user->id)->orderBy('employee_id', 'desc')->first();
 
         if (!$employee) {
             return redirect()->route('employee.dashboard')->with('error', 'Employee record not found.');
         }
 
-        // Fetch all KPIs assigned to this employee
-        $kpis = \App\Models\EmployeeKpi::where('employee_id', $employee->employee_id)
-                           ->with('template')
+        // Fetch the employee's appraisals (including who their evaluator is)
+        $appraisals = Appraisal::where('employee_id', $employee->employee_id)
+                           ->with('evaluator.user')
+                           ->latest()
                            ->get();
 
-        return view('employee.kpi_self_eval', compact('kpis'));
+        return view('employee.kpi_self_eval', compact('appraisals'));
     }
 
-    // --- 10. EMPLOYEE: Submit Self-Evaluation ---
+    // =========================================================
+    // 7. EMPLOYEE: Submit Self-Evaluation Comments
+    // =========================================================
     public function submitSelfEval(Request $request, $id)
     {
         $request->validate([
-            'self_rating' => 'required|numeric|min:0|max:100',
-            'employee_comments' => 'nullable|string'
+            'employee_comments' => 'required|string|min:10'
+        ], [
+            'employee_comments.required' => 'You must provide a self-reflection before submitting.'
         ]);
 
-        $kpi = \App\Models\EmployeeKpi::findOrFail($id);
+        $appraisal = Appraisal::findOrFail($id);
         
-        // Update the record
-        $kpi->update([
-            'self_rating' => $request->self_rating,
+        // Security check: Make sure this appraisal belongs to the logged-in employee
+        $user = Auth::user();
+        $employee = Employee::where('user_id', $user->user_id ?? $user->id)->orderBy('employee_id', 'desc')->first();
+        if ($appraisal->employee_id !== $employee->employee_id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        // Save the comments and move the workflow to the Manager!
+        $appraisal->update([
             'employee_comments' => $request->employee_comments,
-            // Optionally set status to 'In Progress' so Manager sees it's active
-            'kpi_status' => 'in_progress' 
+            'status'            => 'pending_manager' 
         ]);
 
-        return back()->with('success', 'Self-evaluation saved successfully!');
+        return redirect()->back()->with('success', 'Self-evaluation submitted successfully! Your manager will now review and score your performance.');
+    }
+
+    // =========================================================
+    // 8. DEPRECATED ROUTE REDIRECTS (Safety Net)
+    // =========================================================
+    // If you click old links to Department KPIs or "myKpis", redirect them safely
+    public function showDepartmentKpi($id) {
+        return redirect()->route('admin.appraisal');
+    }
+    public function myKpis() {
+        return redirect()->route('employee.kpis.self-eval');
+    }
+
+    // =========================================================
+    // 9. SUPERVISOR: View Appraisals assigned to them
+    // =========================================================
+    public function supervisorInbox()
+    {
+        $user = Auth::user();
+        $supervisor = Employee::where('user_id', $user->user_id ?? $user->id)->first();
+
+        if (!$supervisor) {
+            return redirect()->route('employee.dashboard')->with('error', 'Supervisor record not found.');
+        }
+
+        // Fetch appraisals where this supervisor is the evaluator
+        $appraisals = Appraisal::where('evaluator_id', $supervisor->employee_id)
+                           ->with('employee.user', 'employee.position')
+                           ->orderBy('created_at', 'desc')
+                           ->get();
+
+        return view('supervisor.appraisal_inbox', compact('appraisals'));
+    }
+
+    // =========================================================
+    // 10. SUPERVISOR: Grade the Employee (1-5 Matrix)
+    // =========================================================
+    public function supervisorScore(Request $request, $id)
+    {
+        $request->validate([
+            'score_attendance'    => 'required|numeric|min:1|max:5',
+            'score_teamwork'      => 'required|numeric|min:1|max:5',
+            'score_productivity'  => 'required|numeric|min:1|max:5',
+            'score_communication' => 'required|numeric|min:1|max:5',
+            'manager_comments'    => 'required|string|min:5',
+        ]);
+
+        $appraisal = Appraisal::findOrFail($id);
+
+        // Security check: Only the assigned evaluator can score this!
+        $user = Auth::user();
+        $supervisor = Employee::where('user_id', $user->user_id ?? $user->id)->first();
+        if ($appraisal->evaluator_id !== $supervisor->employee_id) {
+            abort(403, 'Unauthorized action. You are not the assigned evaluator for this review.');
+        }
+
+        // Calculate the overall average score
+        $overall = ($request->score_attendance + $request->score_teamwork + $request->score_productivity + $request->score_communication) / 4;
+
+        $appraisal->update([
+            'score_attendance'    => $request->score_attendance,
+            'score_teamwork'      => $request->score_teamwork,
+            'score_productivity'  => $request->score_productivity,
+            'score_communication' => $request->score_communication,
+            'overall_score'       => $overall,
+            'manager_comments'    => $request->manager_comments,
+            'status'              => 'completed' 
+        ]);
+
+        return redirect()->back()->with('success', 'Appraisal finalized! The employee can now view their final scores.');
     }
 }

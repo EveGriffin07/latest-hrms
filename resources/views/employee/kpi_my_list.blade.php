@@ -16,7 +16,7 @@
   <header>
     <div class="title">Web-Based HRMS</div>
     <div class="user-info">
-        <a href="{{ route('employee.dashboard') }}" style="text-decoration: none; color: inherit;">
+        <a href="{{ route('employee.profile') }}" style="text-decoration: none; color: inherit;">
             <i class="fa-regular fa-user"></i> &nbsp; {{ Auth::user()->name }}
         </a>
     </div>

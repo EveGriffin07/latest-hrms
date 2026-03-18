@@ -18,7 +18,15 @@ class EnsurePayrollUnlocked
         [$start, $end] = $this->extractDateRange($request);
 
         if ($start && $this->isLockedRange($start, $end ?? $start)) {
-            return response()->json(['message' => 'Payroll period locked. Changes must be applied to next period.'], 423);
+            $message = 'Payroll period locked. Changes must be applied to next period.';
+
+            // For API / AJAX calls, keep JSON response with 423 status
+            if ($request->expectsJson() || $request->wantsJson()) {
+                return response()->json(['message' => $message], 423);
+            }
+
+            // For normal web requests, show a UI message on the previous page
+            return redirect()->back()->with('error', $message);
         }
 
         return $next($request);

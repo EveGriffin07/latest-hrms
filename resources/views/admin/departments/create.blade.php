@@ -27,7 +27,10 @@
     @include('admin.layout.sidebar')
     <main>
       <div class="breadcrumb">Admin · Department Management · Create</div>
-      <h2 style="margin:0 0 4px;">Create Department</h2>
+      <h2 style="margin:0 0 4px;">{{ isset($duplicateFrom) ? 'Create same department (new supervisor)' : 'Create Department' }}</h2>
+      @if(isset($duplicateFrom))
+        <p style="margin:0 0 12px; color:#64748b;">Same department name, assign a different supervisor.</p>
+      @endif
 
       @if($errors->any())
         <div class="notice error" style="padding:10px; background:#fee2e2; border-radius:10px; margin-bottom:12px;">{{ $errors->first() }}</div>
@@ -38,7 +41,7 @@
           @csrf
           <div style="margin-bottom:14px;">
             <label for="department_name">Department name *</label>
-            <input type="text" id="department_name" name="department_name" value="{{ old('department_name') }}" required>
+            <input type="text" id="department_name" name="department_name" value="{{ old('department_name', optional($duplicateFrom)->department_name ?? session('duplicate_department_name')) }}" required>
             @error('department_name') <span class="error">{{ $message }}</span> @enderror
           </div>
           <div style="margin-bottom:14px;">

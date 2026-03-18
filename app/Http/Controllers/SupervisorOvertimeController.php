@@ -14,29 +14,32 @@ use Illuminate\Support\Facades\DB;
 
 class SupervisorOvertimeController extends Controller
 {
-    public function index(Request $request)
+   public function index(Request $request)
     {
         $myAreaIds = Area::where('supervisor_id', Auth::id())->pluck('id');
         $myDeptIds = Department::where('manager_id', Auth::id())->pluck('department_id');
 
+        // IF THE SUPERVISOR HAS NO ASSIGNED TEAM:
         if ($myAreaIds->isEmpty() && $myDeptIds->isEmpty()) {
-            $otRequests = collect();
-            $otRequestsPendingCount = 0;
             return view('supervisor.overtime_inbox', [
-                'claims' => new \Illuminate\Pagination\LengthAwarePaginator([], 0, 25),
+                'pendingClaims' => collect(),
+                'actedClaims' => collect(),
                 'departments' => Department::orderBy('department_name')->get(),
-                'total' => 0, 'pending' => 0, 'approved' => 0, 'rejected' => 0,
-                'otRequests' => $otRequests,
-                'otRequestsPendingCount' => $otRequestsPendingCount,
+                'pendingAdminCount' => 0,
+                'flaggedPendingCount' => 0,
+                'approvedCount' => 0,
+                'rejectedCount' => 0,
+                'otRequests' => collect(),
+                'otRequestsPendingCount' => 0,
             ])->with('message', 'No area or department assigned to you. Contact HR to be set as area supervisor or department manager.');
         }
 
-        $status = $request->get('status', OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR);
         $q = $request->get('q');
         $deptId = $request->get('department');
         $start = $request->get('start');
         $end = $request->get('end');
 
+        // BASE QUERY: Fetch claims belonging to this supervisor's areas/departments
         $query = OvertimeClaim::with(['employee.user', 'employee.department', 'area', 'user'])
             ->where(function ($qry) use ($myAreaIds, $myDeptIds) {
                 if ($myAreaIds->isNotEmpty()) {
@@ -47,10 +50,7 @@ class SupervisorOvertimeController extends Controller
                 }
             });
 
-        if ($status !== 'all') {
-            $query->where('status', $status);
-        }
-
+        // APPLY FILTERS
         if ($q) {
             $query->where(function ($qry) use ($q) {
                 $qry->whereHas('employee', function ($e) use ($q) {
@@ -71,28 +71,58 @@ class SupervisorOvertimeController extends Controller
             $query->whereDate('date', '<=', $end);
         }
 
-        $perPage = min(100, max(10, (int) $request->get('per_page', 25)));
-        $claims = $query->orderByDesc('submitted_at')->orderByDesc('id')->paginate($perPage);
+        // 1. PENDING CLAIMS (For the "Pending your approval" table)
+        $pendingClaims = (clone $query)
+            ->where('status', OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR)
+            ->orderByDesc('submitted_at')
+            ->get();
 
-        $baseQuery = OvertimeClaim::where(function ($qry) use ($myAreaIds, $myDeptIds) {
-            if ($myAreaIds->isNotEmpty()) $qry->orWhereIn('area_id', $myAreaIds);
-            if ($myDeptIds->isNotEmpty()) $qry->orWhereHas('user', fn($u) => $u->whereIn('dept_id', $myDeptIds));
-        });
-        $total = (clone $baseQuery)->count();
-        $pending = (clone $baseQuery)->where('status', OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR)->count();
-        $approved = (clone $baseQuery)->whereIn('status', [OvertimeClaim::STATUS_SUPERVISOR_APPROVED, OvertimeClaim::STATUS_ADMIN_PENDING, OvertimeClaim::STATUS_ADMIN_APPROVED])->count();
-        $rejected = (clone $baseQuery)->where('status', OvertimeClaim::STATUS_SUPERVISOR_REJECTED)->count();
+        // 2. ACTED CLAIMS (For the "OT you approved or rejected" table)
+        $actedClaims = (clone $query)
+            ->whereIn('status', [
+                OvertimeClaim::STATUS_SUPERVISOR_APPROVED, 
+                OvertimeClaim::STATUS_SUPERVISOR_REJECTED, 
+                OvertimeClaim::STATUS_ADMIN_PENDING, 
+                OvertimeClaim::STATUS_ADMIN_APPROVED
+            ])
+            ->orderByDesc('updated_at')
+            ->get();
+
+        // 3. COUNTS FOR THE TOP SUMMARY CARDS
+        $pendingAdminCount = (clone $query)->where('status', OvertimeClaim::STATUS_ADMIN_PENDING)->count();
+        $flaggedPendingCount = $pendingClaims->count();
+        $approvedCount = (clone $query)->whereIn('status', [
+            OvertimeClaim::STATUS_SUPERVISOR_APPROVED, 
+            OvertimeClaim::STATUS_ADMIN_PENDING, 
+            OvertimeClaim::STATUS_ADMIN_APPROVED
+        ])->count();
+        $rejectedCount = (clone $query)->where('status', OvertimeClaim::STATUS_SUPERVISOR_REJECTED)->count();
 
         $departments = Department::orderBy('department_name')->get();
 
-        // OT Requests (OvertimeRecord) assigned to this supervisor, pending their action
+        // 4. PRESERVE ORIGINAL OT REQUESTS (Just in case the Sidebar uses it)
+        $supervisorEmpId = Auth::user()->employee->employee_id ?? 0;
         $otRequestsQuery = OvertimeRecord::with(['employee.user', 'employee.department'])
-            ->where('supervisor_id', Auth::id())
-            ->where('final_status', \App\Models\OvertimeRecord::FINAL_PENDING_SUPERVISOR);
+            ->whereHas('employee', function($q) use ($supervisorEmpId) {
+                $q->where('supervisor_id', $supervisorEmpId);
+            })
+            ->where('ot_status', \App\Models\OvertimeRecord::FINAL_PENDING_SUPERVISOR ?? 'pending');
+            
         $otRequestsPendingCount = (clone $otRequestsQuery)->count();
         $otRequests = (clone $otRequestsQuery)->orderBy('date', 'desc')->orderBy('ot_id', 'desc')->limit(10)->get();
 
-        return view('supervisor.overtime_inbox', compact('claims', 'departments', 'total', 'pending', 'approved', 'rejected', 'otRequests', 'otRequestsPendingCount'));
+        // RETURN ALL ALIGNED VARIABLES TO THE VIEW!
+        return view('supervisor.overtime_inbox', compact(
+            'pendingClaims', 
+            'actedClaims', 
+            'departments', 
+            'pendingAdminCount', 
+            'flaggedPendingCount', 
+            'approvedCount', 
+            'rejectedCount',
+            'otRequests',
+            'otRequestsPendingCount'
+        ));
     }
 
     public function show(OvertimeClaim $claim)
