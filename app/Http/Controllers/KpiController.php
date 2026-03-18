@@ -12,7 +12,7 @@ use App\Models\Employee;
 class KpiController extends Controller
 {
     // =========================================================
-    // 1. DASHBOARD PAGE (Admin Overview)
+    // 1. ADMIN: DASHBOARD PAGE
     // =========================================================
     public function index()
     {
@@ -33,7 +33,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 2. CREATE FORM (Initiate New Review)
+    // 2. ADMIN: CREATE FORM (Initiate New Review)
     // =========================================================
     public function create()
     {
@@ -44,7 +44,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 3. STORE RECORD (Save to Database)
+    // 3. ADMIN: STORE RECORD (Save to Database)
     // =========================================================
     public function store(Request $request)
     {
@@ -74,59 +74,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 4. MANAGER: Update & Finalize Score (1 to 5 Matrix)
-    // =========================================================
-    public function updateScore(Request $request, $id)
-    {
-        $request->validate([
-            'score_attendance'    => 'required|numeric|min:1|max:5',
-            'score_teamwork'      => 'required|numeric|min:1|max:5',
-            'score_productivity'  => 'required|numeric|min:1|max:5',
-            'score_communication' => 'required|numeric|min:1|max:5',
-            'manager_comments'    => 'required|string',
-        ]);
-
-        $appraisal = Appraisal::findOrFail($id);
-
-        // Auto-calculate the Overall Score Average
-        $overall = ($request->score_attendance + $request->score_teamwork + $request->score_productivity + $request->score_communication) / 4;
-
-        $appraisal->update([
-            'score_attendance'    => $request->score_attendance,
-            'score_teamwork'      => $request->score_teamwork,
-            'score_productivity'  => $request->score_productivity,
-            'score_communication' => $request->score_communication,
-            'overall_score'       => $overall,
-            'manager_comments'    => $request->manager_comments,
-            'status'              => 'completed' // Closes the review!
-        ]);
-
-        return redirect()->back()->with('success', 'Appraisal scored and finalized successfully!');
-    }
-
-    // =========================================================
-    // 5. EMPLOYEE LIST & DETAILS (Admin Views)
-    // =========================================================
-    public function employeeList()
-    {
-        // Get employees and count how many appraisals they have
-        $employees = Employee::with(['department', 'user'])->withCount('appraisals')->get();
-        return view('admin.appraisal_kpi_employee_list', compact('employees'));
-    }
-
-    public function showEmployeeKpis(Request $request)
-    {
-        $empId = $request->query('emp');
-        $employee = Employee::with(['department', 'user'])->findOrFail($empId);
-        
-        // Fetch the new appraisals instead of old EmployeeKpi
-        $appraisals = Appraisal::where('employee_id', $empId)->with('evaluator.user')->get();
-
-        return view('admin.appraisal_kpi_employee', compact('employee', 'appraisals'));
-    }
-
-    // =========================================================
-    // 6. EMPLOYEE: View their Appraisals
+    // 4. EMPLOYEE: View their Appraisals
     // =========================================================
     public function selfEvaluationList()
     {
@@ -147,7 +95,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 7. EMPLOYEE: Submit Self-Evaluation Comments
+    // 5. EMPLOYEE: Submit Self-Evaluation Comments
     // =========================================================
     public function submitSelfEval(Request $request, $id)
     {
@@ -176,18 +124,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 8. DEPRECATED ROUTE REDIRECTS (Safety Net)
-    // =========================================================
-    // If you click old links to Department KPIs or "myKpis", redirect them safely
-    public function showDepartmentKpi($id) {
-        return redirect()->route('admin.appraisal');
-    }
-    public function myKpis() {
-        return redirect()->route('employee.kpis.self-eval');
-    }
-
-    // =========================================================
-    // 9. SUPERVISOR: View Appraisals assigned to them
+    // 6. SUPERVISOR: View Appraisals assigned to them
     // =========================================================
     public function supervisorInbox()
     {
@@ -208,7 +145,7 @@ class KpiController extends Controller
     }
 
     // =========================================================
-    // 10. SUPERVISOR: Grade the Employee (1-5 Matrix)
+    // 7. SUPERVISOR: Grade the Employee (1-5 Matrix)
     // =========================================================
     public function supervisorScore(Request $request, $id)
     {

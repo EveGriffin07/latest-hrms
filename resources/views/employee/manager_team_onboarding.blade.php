@@ -56,7 +56,7 @@
                 @if($sub->onboarding)
                 <tr>
                     <td><strong>{{ $sub->user->name ?? 'N/A' }}</strong></td>
-                    <td>{{ $sub->position->title ?? 'N/A' }}</td>
+                    <td>{{ $sub->position->position_name ?? 'N/A' }}</td>
                     <td>{{ \Carbon\Carbon::parse($sub->onboarding->start_date)->format('d M Y') }}</td>
                     <td>
                         @if($sub->onboarding->status == 'completed')

@@ -230,4 +230,32 @@ class JobPostController extends Controller
         return redirect()->route('admin.recruitment.index')
                          ->with('success', 'Job post duplicated successfully! It is currently saved as a Draft.');
     }
+
+    // ==========================================
+    // MANAGER ACTION CENTER: Submit Requisition
+    // ==========================================
+    public function storeRequisition(Request $request)
+    {
+        $request->validate([
+            'job_title'       => 'required|string|max:255',
+            'employment_type' => 'required|string',
+            'headcount'       => 'required|integer|min:1',
+            'justification'   => 'required|string'
+        ]);
+
+        $user = Auth::user();
+        $employee = \App\Models\Employee::where('user_id', $user->user_id ?? $user->id)->first();
+
+        \App\Models\JobRequisition::create([
+            'requester_id'    => $employee->employee_id ?? 1, 
+            'department_id'   => $employee->department_id ?? 1,
+            'job_title'       => $request->job_title,
+            'employment_type' => $request->employment_type,
+            'headcount'       => $request->headcount,
+            'justification'   => $request->justification,
+            'status'          => 'Pending'
+        ]);
+
+        return redirect()->back()->with('success', 'Job Requisition submitted to HR successfully! You will be notified once it is approved.');
+    }
 }

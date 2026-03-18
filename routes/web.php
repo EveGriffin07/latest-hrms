@@ -126,7 +126,7 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
     Route::post('/recruitment/store', [JobPostController::class, 'store'])->name('admin.recruitment.store');
     Route::post('/recruitment/update/{id}', [JobPostController::class, 'update'])->name('admin.recruitment.update');
     Route::delete('/recruitment/delete/{id}', [JobPostController::class, 'destroy'])->name('admin.recruitment.destroy');
-    Route::post('/admin/recruitment/duplicate/{id}', [App\Http\Controllers\JobPostController::class, 'duplicate'])->name('admin.recruitment.duplicate');
+    Route::post('/admin/recruitment/duplicate/{id}', [JobPostController::class, 'duplicate'])->name('admin.recruitment.duplicate');
     Route::post('/recruitment/requisition/{id}/approve', [JobPostController::class, 'approveRequisition'])->name('admin.recruitment.approveRequisition');
     Route::post('/recruitment/requisition/{id}/reject', [JobPostController::class, 'rejectRequisition'])->name('admin.recruitment.rejectRequisition');
 
@@ -136,16 +136,12 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
     Route::post('/recruitment/applicants/{id}/evaluate', [ApplicationController::class, 'saveEvaluation'])->name('admin.applicants.evaluate');
     Route::post('/recruitment/applicants/{id}/status', [ApplicationController::class, 'updateStatus'])->name('admin.applicants.updateStatus');
     Route::post('/recruitment/applicants/{id}/onboard', [ApplicationController::class, 'onboard'])->name('admin.applicants.onboard');
-    Route::post('/admin/applicants/{id}/schedule', [App\Http\Controllers\ApplicationController::class, 'scheduleInterview'])->name('admin.applicants.schedule');
+    Route::post('/admin/applicants/{id}/schedule', [ApplicationController::class, 'scheduleInterview'])->name('admin.applicants.schedule');
 
-    // Appraisal
+    // Appraisal (Performance Reviews)
     Route::get('/appraisal', [KpiController::class, 'index'])->name('admin.appraisal');
-    Route::get('/appraisal/add-kpi', [KpiController::class, 'create'])->name('admin.appraisal.add-kpi');
-    Route::post('/appraisal/store-kpi', [KpiController::class, 'store'])->name('admin.appraisal.store');
-    Route::get('/appraisal/employee-list', [KpiController::class, 'employeeList'])->name('admin.appraisal.employee-kpi-list');
-    Route::get('/appraisal/employee-kpis', [KpiController::class, 'showEmployeeKpis'])->name('admin.appraisal.employee-kpis');
-    Route::get('/appraisal/department-kpi/{id}', [KpiController::class, 'showDepartmentKpi'])->name('admin.appraisal.department-kpi');
-    Route::post('/appraisal/update-score/{id}', [KpiController::class, 'updateScore'])->name('admin.appraisal.update-score');
+    Route::get('/appraisal/initiate', [KpiController::class, 'create'])->name('admin.appraisal.add-kpi');
+    Route::post('/appraisal/store', [KpiController::class, 'store'])->name('admin.appraisal.store');
 
     // Training
     Route::get('/training', [TrainingController::class, 'index'])->name('admin.training');
@@ -176,7 +172,7 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
     Route::put('/areas/{area}', [AdminAreaController::class, 'update'])->name('admin.areas.update');
     Route::post('/areas/move-employee', [AdminAreaController::class, 'moveEmployee'])->name('admin.areas.move_employee');
 
-    // Department Management (create departments, assign manager, assign employees by checkbox)
+    // Department Management
     Route::get('/departments', [AdminDepartmentController::class, 'index'])->name('admin.departments.index');
     Route::get('/departments/create', [AdminDepartmentController::class, 'create'])->name('admin.departments.create');
     Route::get('/departments/{department}/duplicate', [AdminDepartmentController::class, 'duplicate'])->name('admin.departments.duplicate');
@@ -201,11 +197,11 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
         ->middleware('payroll.unlocked')
         ->name('admin.attendance.penalty.status');
 
-
-        // Penalty Removal Requests (supervisor forwarded → admin final decision)
+    // Penalty Removal Requests
     Route::get('/attendance/penalty-removal-requests', [AdminPenaltyRemovalController::class, 'index'])->name('admin.attendance.penalty_removal_requests.index');
     Route::post('/attendance/penalty-removal-requests/{removal}/approve', [AdminPenaltyRemovalController::class, 'approve'])->name('admin.attendance.penalty_removal_requests.approve');
     Route::post('/attendance/penalty-removal-requests/{removal}/reject', [AdminPenaltyRemovalController::class, 'reject'])->name('admin.attendance.penalty_removal_requests.reject');
+    
     // Payroll
     Route::prefix('/payroll')->group(function () {
         Route::get('/overtime', [AdminOvertimeController::class, 'index'])->name('admin.payroll.overtime');
@@ -214,7 +210,7 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
             ->middleware('payroll.unlocked')
             ->name('admin.payroll.overtime.status');
 
-       // OT Claims (supervisor-approved → admin final approval)
+       // OT Claims
         Route::get('/overtime-claims', [AdminOvertimeClaimController::class, 'index'])->name('admin.payroll.overtime_claims');
         Route::get('/overtime-claims/{claim}', [AdminOvertimeClaimController::class, 'show'])->name('admin.payroll.overtime_claims.show');
         Route::post('/overtime-claims/bulk-approve', [AdminOvertimeClaimController::class, 'bulkApprove'])->name('admin.payroll.overtime_claims.bulk_approve');
@@ -255,25 +251,18 @@ Route::prefix('admin')->middleware(['auth', 'role:admin,administrator,hr,manager
         Route::post('/types/{leaveType}', [AdminLeaveTypeController::class, 'update'])->name('admin.leave.types.update');
     });
 
-    // Audit Log (admin/HR only, read-only)
+    // Audit Log
     Route::get('/audit-log', [AdminAuditLogController::class, 'index'])->name('admin.audit.log');
     Route::get('/audit-log/data', [AdminAuditLogController::class, 'data'])->name('admin.audit.log.data');
     Route::get('/audit-log/{id}', [AdminAuditLogController::class, 'show'])->name('admin.audit.log.show');
 
     // Face Enrollment / Verification (Admin)
-    Route::get('/face/enroll', [FaceRecognitionController::class, 'showEnrollForm'])
-        ->name('admin.face.enroll');
-    Route::post('/face/reset/{employee}', [FaceRecognitionController::class, 'resetFace'])
-        ->name('admin.face.reset');
-    Route::get('/face/verify', [FaceRecognitionController::class, 'showAdminVerifyForm'])
-        ->name('admin.face.verify');
-    Route::post('/face/verify/{employee}', [FaceRecognitionController::class, 'verify'])
-        ->middleware('payroll.unlocked')
-        ->name('admin.face.verify.post');
-    Route::get('/face/enroll-self', [FaceRecognitionController::class, 'showAdminSelfEnrollForm'])
-        ->name('admin.face.enroll.self');
-    Route::post('/face/enroll-self', [\App\Http\Controllers\EmployeeFaceController::class, 'enroll'])
-        ->name('admin.face.enroll.self.post');
+    Route::get('/face/enroll', [FaceRecognitionController::class, 'showEnrollForm'])->name('admin.face.enroll');
+    Route::post('/face/reset/{employee}', [FaceRecognitionController::class, 'resetFace'])->name('admin.face.reset');
+    Route::get('/face/verify', [FaceRecognitionController::class, 'showAdminVerifyForm'])->name('admin.face.verify');
+    Route::post('/face/verify/{employee}', [FaceRecognitionController::class, 'verify'])->middleware('payroll.unlocked')->name('admin.face.verify.post');
+    Route::get('/face/enroll-self', [FaceRecognitionController::class, 'showAdminSelfEnrollForm'])->name('admin.face.enroll.self');
+    Route::post('/face/enroll-self', [\App\Http\Controllers\EmployeeFaceController::class, 'enroll'])->name('admin.face.enroll.self.post');
 });
 
 /*
@@ -293,18 +282,14 @@ Route::prefix('applicant')->middleware(['auth', 'role:applicant', 'verified'])->
     Route::post('/profile/update', [ApplicantJobController::class, 'updateProfile'])->name('applicant.profile.update');
     Route::get('/profile/resume/delete', [ApplicantJobController::class, 'deleteResume'])->name('applicant.resume.delete');
     
-    // JobStreet-Style Profile Cards (Education, Languages, Skills)
     Route::post('/profile/education', [ApplicantJobController::class, 'storeEducation'])->name('applicant.education.store');
     Route::delete('/profile/education/{id}', [ApplicantJobController::class, 'deleteEducation'])->name('applicant.education.destroy');
-    
     Route::post('/profile/language', [ApplicantJobController::class, 'storeLanguage'])->name('applicant.language.store');
     Route::delete('/profile/language/{id}', [ApplicantJobController::class, 'deleteLanguage'])->name('applicant.language.destroy');
-    
     Route::post('/profile/skill', [ApplicantJobController::class, 'storeSkill'])->name('applicant.skill.store');
     Route::delete('/profile/skill/{id}', [ApplicantJobController::class, 'deleteSkill'])->name('applicant.skill.destroy');
-
     Route::post('/profile/experience', [ApplicantJobController::class, 'storeExperience'])->name('applicant.experience.store');
-Route::delete('/profile/experience/{id}', [ApplicantJobController::class, 'deleteExperience'])->name('applicant.experience.destroy');
+    Route::delete('/profile/experience/{id}', [ApplicantJobController::class, 'deleteExperience'])->name('applicant.experience.destroy');
 });
 
 /*
@@ -319,64 +304,46 @@ Route::middleware(['auth', 'role:employee,supervisor'])->group(function () {
     // Employee Profile & Requisitions
     Route::get('/employee/profile', [EmployeeProfileController::class, 'show'])->name('employee.profile');
     Route::post('/employee/profile/update', [EmployeeProfileController::class, 'updateProfile'])->name('employee.profile.update');
-    Route::post('/employee/requisition/store', [App\Http\Controllers\EmployeeController::class, 'storeRequisition'])->name('employee.requisition.store');
+    
+    // === BUG FIX: WIRED REQUISITION STORE CORRECTLY ===
+    Route::post('/employee/requisition/store', [JobPostController::class, 'storeRequisition'])->name('employee.requisition.store');
 
-    Route::get('/employee/announcements/{id}', [EmployeeController::class, 'showAnnouncement'])->name('employee.announcements.show');
-    Route::get('/employee/my-kpis', [KpiController::class, 'myKpis'])->name('employee.kpis');
+    // Employee Performance Appraisals (Self-Evaluations)
     Route::get('/employee/appraisal/reviews', [KpiController::class, 'selfEvaluationList'])->name('employee.kpis.self-eval');
     Route::post('/employee/appraisal/reviews/submit/{id}', [KpiController::class, 'submitSelfEval'])->name('employee.kpis.store-eval');
     
     Route::get('/employee/training/my-plans', [EmployeeTrainingController::class, 'index'])->name('employee.training.index');
-    
-    // === BUG FIX: The scan route MUST be placed above the {id} route! ===
-    Route::get('/employee/training/scan/{token}', [App\Http\Controllers\EmployeeTrainingController::class, 'scanQr'])->name('employee.training.scan');
+    Route::get('/employee/training/scan/{token}', [EmployeeTrainingController::class, 'scanQr'])->name('employee.training.scan');
     Route::get('/employee/training/{id}', [EmployeeTrainingController::class, 'show'])->name('employee.training.show');
-    // =====================================================================
 
     Route::get('/employee/onboarding', [EmployeeOnboardingController::class, 'index'])->name('employee.onboarding.index');
     Route::post('/employee/onboarding/task/{id}/complete', [EmployeeOnboardingController::class, 'completeTask'])->name('employee.onboarding.complete');
+    
     Route::get('/employee/assistant', fn() => view('employee.assistant'))->name('employee.assistant');
-    Route::post('/employee/assistant/chat', [App\Http\Controllers\EmployeeAssistantController::class, 'chat'])->name('employee.assistant.chat');
+    Route::post('/employee/assistant/chat', [EmployeeAssistantController::class, 'chat'])->name('employee.assistant.chat');
 
     // Face enrollment (employee self)
-    Route::get('/employee/face/enroll', [\App\Http\Controllers\EmployeeFaceController::class, 'enrollForm'])
-        ->name('employee.face.enroll');
-    Route::post('/employee/face/enroll', [\App\Http\Controllers\EmployeeFaceController::class, 'enroll'])
-        ->name('employee.face.enroll.post');
-    Route::post('/employee/face/enroll/start', [\App\Http\Controllers\EmployeeFaceController::class, 'startEnrollSession'])
-        ->name('employee.face.enroll.start');
-    Route::post('/employee/face/enroll/validate-step', [\App\Http\Controllers\EmployeeFaceController::class, 'validateStep'])
-        ->name('employee.face.enroll.validate-step');
-    Route::post('/employee/face/enroll/frame', [\App\Http\Controllers\EmployeeFaceController::class, 'processFrame'])
-        ->name('employee.face.enroll.frame');
-    Route::post('/employee/face/enroll/finalize', [\App\Http\Controllers\EmployeeFaceController::class, 'finalizeEnroll'])
-        ->name('employee.face.enroll.finalize');
-    Route::post('/employee/face/enroll/complete', [\App\Http\Controllers\EmployeeFaceController::class, 'completeEnroll'])
-        ->name('employee.face.enroll.complete');
-    Route::delete('/employee/face/templates/{template}', [\App\Http\Controllers\EmployeeFaceController::class, 'destroy'])
-        ->name('employee.face.templates.destroy');
-    Route::get('/employee/attendance/face', [EmployeeFaceAttendanceController::class, 'show'])
-        ->name('employee.attendance.face');
-    Route::post('/employee/attendance/face', [EmployeeFaceAttendanceController::class, 'check'])
-        ->name('employee.attendance.face.post');
+    Route::get('/employee/face/enroll', [\App\Http\Controllers\EmployeeFaceController::class, 'enrollForm'])->name('employee.face.enroll');
+    Route::post('/employee/face/enroll', [\App\Http\Controllers\EmployeeFaceController::class, 'enroll'])->name('employee.face.enroll.post');
+    Route::post('/employee/face/enroll/start', [\App\Http\Controllers\EmployeeFaceController::class, 'startEnrollSession'])->name('employee.face.enroll.start');
+    Route::post('/employee/face/enroll/validate-step', [\App\Http\Controllers\EmployeeFaceController::class, 'validateStep'])->name('employee.face.enroll.validate-step');
+    Route::post('/employee/face/enroll/frame', [\App\Http\Controllers\EmployeeFaceController::class, 'processFrame'])->name('employee.face.enroll.frame');
+    Route::post('/employee/face/enroll/finalize', [\App\Http\Controllers\EmployeeFaceController::class, 'finalizeEnroll'])->name('employee.face.enroll.finalize');
+    Route::post('/employee/face/enroll/complete', [\App\Http\Controllers\EmployeeFaceController::class, 'completeEnroll'])->name('employee.face.enroll.complete');
+    Route::delete('/employee/face/templates/{template}', [\App\Http\Controllers\EmployeeFaceController::class, 'destroy'])->name('employee.face.templates.destroy');
+    Route::get('/employee/attendance/face', [EmployeeFaceAttendanceController::class, 'show'])->name('employee.attendance.face');
+    Route::post('/employee/attendance/face', [EmployeeFaceAttendanceController::class, 'check'])->name('employee.attendance.face.post');
 
     // Employee self-service pages
     Route::get('/employee/attendance/log', [EmployeeAttendanceController::class, 'index'])->name('employee.attendance.log');
     Route::get('/employee/penalties', [EmployeePenaltyController::class, 'index'])->name('employee.penalties.index');
-    Route::post('/employee/penalties/{penalty}/removal-request', [EmployeePenaltyController::class, 'submitRemovalRequest'])
-        ->name('employee.penalties.removal_request.submit');
-    Route::post('/employee/penalties/removal-request/{removal}/cancel', [EmployeePenaltyController::class, 'cancelRemovalRequest'])
-        ->name('employee.penalties.removal_request.cancel');
-    Route::get('/employee/attendance/overtime', [\App\Http\Controllers\EmployeeOvertimeController::class, 'index'])
-        ->name('employee.attendance.overtime');
-    Route::post('/employee/attendance/overtime', [\App\Http\Controllers\EmployeeOvertimeController::class, 'store'])
-        ->middleware('payroll.unlocked')
-        ->name('employee.attendance.overtime.store');
-    Route::delete('/employee/attendance/overtime/{overtime}', [\App\Http\Controllers\EmployeeOvertimeController::class, 'destroy'])
-        ->middleware('payroll.unlocked')
-        ->name('employee.attendance.overtime.destroy');
+    Route::post('/employee/penalties/{penalty}/removal-request', [EmployeePenaltyController::class, 'submitRemovalRequest'])->name('employee.penalties.removal_request.submit');
+    Route::post('/employee/penalties/removal-request/{removal}/cancel', [EmployeePenaltyController::class, 'cancelRemovalRequest'])->name('employee.penalties.removal_request.cancel');
+    Route::get('/employee/attendance/overtime', [\App\Http\Controllers\EmployeeOvertimeController::class, 'index'])->name('employee.attendance.overtime');
+    Route::post('/employee/attendance/overtime', [\App\Http\Controllers\EmployeeOvertimeController::class, 'store'])->middleware('payroll.unlocked')->name('employee.attendance.overtime.store');
+    Route::delete('/employee/attendance/overtime/{overtime}', [\App\Http\Controllers\EmployeeOvertimeController::class, 'destroy'])->middleware('payroll.unlocked')->name('employee.attendance.overtime.destroy');
 
-    // OT Claim workflow (Employee: submit → Supervisor → Admin)
+    // OT Claim workflow
     Route::get('/employee/ot-claims', [EmployeeOvertimeClaimController::class, 'index'])->name('employee.ot_claims.index');
     Route::get('/employee/ot-claims/create', [EmployeeOvertimeClaimController::class, 'create'])->name('employee.ot_claims.create');
     Route::get('/employee/ot-claims/check-duplicate', [EmployeeOvertimeClaimController::class, 'checkDuplicate'])->name('employee.ot_claims.check_duplicate');
@@ -386,7 +353,7 @@ Route::middleware(['auth', 'role:employee,supervisor'])->group(function () {
     Route::put('/employee/ot-claims/{claim}', [EmployeeOvertimeClaimController::class, 'update'])->name('employee.ot_claims.update');
     Route::post('/employee/ot-claims/{claim}/cancel', [EmployeeOvertimeClaimController::class, 'cancel'])->name('employee.ot_claims.cancel');
 
-    // OT Requests & OT Claims Inbox (under employee; supervisors use these to approve)
+    // OT Requests & OT Claims Inbox
     Route::get('/employee/overtime-requests', [SupervisorOvertimeRecordController::class, 'index'])->name('employee.overtime_requests.index');
     Route::post('/employee/overtime-requests/{overtime}/approve', [SupervisorOvertimeRecordController::class, 'approve'])->name('employee.overtime_requests.approve');
     Route::post('/employee/overtime-requests/{overtime}/reject', [SupervisorOvertimeRecordController::class, 'reject'])->name('employee.overtime_requests.reject');
@@ -406,24 +373,17 @@ Route::middleware(['auth', 'role:employee,supervisor'])->group(function () {
     Route::post('/employee/leave/apply', [EmployeeLeaveController::class, 'store'])->name('employee.leave.store');
     Route::get('/employee/leave/balance', [EmployeeLeaveController::class, 'index'])->name('employee.leave.balance');
     Route::get('/employee/leave/history', [EmployeeLeaveController::class, 'index'])->name('employee.leave.history');
-    Route::post('/employee/leave/{leave}/cancel', [EmployeeLeaveController::class, 'cancel'])
-        ->name('employee.leave.cancel');
+    Route::post('/employee/leave/{leave}/cancel', [EmployeeLeaveController::class, 'cancel'])->name('employee.leave.cancel');
+    
     Route::get('/employee/payroll/payslips', [EmployeePayrollController::class, 'index'])->name('employee.payroll.payslips');
     Route::get('/employee/payroll/detail', [EmployeePayrollController::class, 'detail'])->name('employee.payroll.detail');
     Route::get('/employee/payroll/tax', [EmployeePayrollController::class, 'index'])->name('employee.payroll.tax');
     Route::get('/employee/payroll/payslip/{payslip}', [EmployeePayrollController::class, 'downloadPayslip'])->name('employee.payroll.download');
     Route::get('/employee/payroll/tax/{year}', [EmployeePayrollController::class, 'downloadTax'])->name('employee.payroll.tax.download');
 
-    // Face Verification (Employee self-service)
-    Route::get('/employee/face/verify', [FaceRecognitionController::class, 'showVerifyForm'])
-        ->name('employee.face.verify.form');
-
-    // Face enroll/verify actions (auth required; controller enforces role)
-    Route::post('/employees/{id}/face/enroll', [FaceRecognitionController::class, 'enroll'])
-        ->name('face.enroll');
-    Route::post('/employees/{id}/face/verify', [FaceRecognitionController::class, 'verify'])
-        ->middleware('payroll.unlocked')
-        ->name('face.verify');
+    Route::get('/employee/face/verify', [FaceRecognitionController::class, 'showVerifyForm'])->name('employee.face.verify.form');
+    Route::post('/employees/{id}/face/enroll', [FaceRecognitionController::class, 'enroll'])->name('face.enroll');
+    Route::post('/employees/{id}/face/verify', [FaceRecognitionController::class, 'verify'])->middleware('payroll.unlocked')->name('face.verify');
 });
 
 /*
@@ -434,23 +394,25 @@ Route::middleware(['auth', 'role:employee,supervisor'])->group(function () {
 Route::prefix('supervisor')->middleware(['auth', 'role:supervisor'])->group(function () {
     Route::get('/profile', [SupervisorProfileController::class, 'show'])->name('supervisor.profile');
     Route::post('/profile/update', [SupervisorProfileController::class, 'updateProfile'])->name('supervisor.profile.update');
-// Leave: pending at supervisor + upload approved to admin
+    
+    // Leave
     Route::get('/leave/inbox', [SupervisorLeaveController::class, 'index'])->name('supervisor.leave.inbox');
     Route::get('/leave/employee/{employee}/balance', [AdminLeaveBalanceController::class, 'employeeBalance'])->name('supervisor.leave.employee.balance');
     Route::post('/leave/{leave}/approve', [SupervisorLeaveController::class, 'approve'])->name('supervisor.leave.approve');
     Route::post('/leave/{leave}/reject', [SupervisorLeaveController::class, 'reject'])->name('supervisor.leave.reject');
     Route::post('/leave/{leave}/upload-admin', [SupervisorLeaveController::class, 'uploadToAdmin'])->name('supervisor.leave.upload_admin');
 
-    // Penalty removal requests (supervisor review → forward to admin or reject)
+    // Penalty removal requests
     Route::get('/penalty-removal', [SupervisorPenaltyController::class, 'index'])->name('supervisor.penalty_removal.index');
     Route::post('/penalty-removal/{removal}/approve', [SupervisorPenaltyController::class, 'approve'])->name('supervisor.penalty_removal.approve');
     Route::post('/penalty-removal/{removal}/reject', [SupervisorPenaltyController::class, 'reject'])->name('supervisor.penalty_removal.reject');
-    Route::get('/supervisor/team-onboarding', [EmployeeOnboardingController::class, 'teamOnboarding'])->name('manager.onboarding.team');
-    Route::get('/supervisor/team-onboarding/{id}', [EmployeeOnboardingController::class, 'showTeamMemberOnboarding'])->name('manager.onboarding.show');
-    Route::post('/supervisor/onboarding/complete/{id}', [EmployeeOnboardingController::class, 'completeTask'])->name('manager.onboarding.completeTask');
-    Route::post('/supervisor/onboarding/{id}/add-task', [EmployeeOnboardingController::class, 'addTask'])->name('manager.onboarding.addTask');
+    
+    // === BUG FIX: WIRED MANAGER TEAM ONBOARDING CORRECTLY ===
+    Route::get('/team-onboarding', [OnboardingController::class, 'teamOnboardingIndex'])->name('manager.onboarding.index');
+    Route::get('/team-onboarding/team', [OnboardingController::class, 'teamOnboardingIndex'])->name('manager.onboarding.team');
+    Route::get('/team-onboarding/{id}/show', [OnboardingController::class, 'showTeamOnboarding'])->name('manager.onboarding.show');
 
     // Supervisor Performance Appraisals
-    Route::get('/appraisals/inbox', [App\Http\Controllers\KpiController::class, 'supervisorInbox'])->name('supervisor.appraisal.inbox');
-    Route::post('/appraisals/{id}/score', [App\Http\Controllers\KpiController::class, 'supervisorScore'])->name('supervisor.appraisal.score');
+    Route::get('/appraisals/inbox', [KpiController::class, 'supervisorInbox'])->name('supervisor.appraisal.inbox');
+    Route::post('/appraisals/{id}/score', [KpiController::class, 'supervisorScore'])->name('supervisor.appraisal.score');
 });

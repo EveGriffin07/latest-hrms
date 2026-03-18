@@ -314,9 +314,6 @@
     <button type="button" onclick="window.location='{{ route('employee.training.index') }}'">
         <i class="fa-solid fa-graduation-cap"></i> My Training
     </button>
-    <button type="button" onclick="window.location='{{ route('employee.kpis') }}'">
-        <i class="fa-solid fa-chart-line"></i> My KPIs
-    </button>
     <button type="button" onclick="window.location='{{ url('/employee/leave/apply') }}'">
         <i class="fa-solid fa-plane-departure"></i> Apply for Leave
     </button>

@@ -182,4 +182,42 @@ class OnboardingController extends Controller
 
         return redirect()->route('admin.onboarding')->with('success', 'Reporting structure updated and checklist generated successfully!');
     }
+
+    // ==========================================
+    // MANAGER ACTION CENTER: Team Onboarding
+    // ==========================================
+    public function teamOnboardingIndex()
+    {
+        $user = Auth::user();
+        $manager = \App\Models\Employee::where('user_id', $user->user_id ?? $user->id)->first();
+
+        if (!$manager) {
+            return redirect()->back()->with('error', 'Manager profile not found.');
+        }
+
+        // Find all employees who report to this manager, and load their onboarding data
+        $subordinates = \App\Models\Employee::with(['user', 'position', 'onboarding'])
+                        ->where('supervisor_id', $manager->employee_id)
+                        ->get();
+
+        return view('employee.manager_team_onboarding', compact('subordinates'));
+    }
+
+   public function showTeamOnboarding($onboarding_id)
+    {
+        // Added 'tasks' so the review page can load the checklist successfully!
+        $onboarding = Onboarding::with(['employee.user', 'tasks'])->findOrFail($onboarding_id);
+        
+        // ADDED 'employee.' prefix so Laravel knows which folder to look inside!
+        if (view()->exists('employee.manager_team_onboarding_review')) {
+            return view('employee.manager_team_onboarding_review', compact('onboarding'));
+        }
+        
+        // If the file is actually in the supervisor folder instead, it will try this one:
+        if (view()->exists('supervisor.manager_team_onboarding_review')) {
+            return view('supervisor.manager_team_onboarding_review', compact('onboarding'));
+        }
+        
+        return redirect()->back()->with('error', 'The review blade file could not be found in the employee or supervisor folder.');
+    }
 }

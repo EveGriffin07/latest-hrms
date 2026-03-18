@@ -1,190 +1,151 @@
+@php
+  // 1. Check if the user is a Supervisor or Manager
+  $role = strtolower(Auth::user()->role ?? 'employee');
+  $isSupervisor = ($role === 'supervisor' || $role === 'manager');
+
+  // 2. Smart routing to keep menus open and highlight the active blue pill
+  $openSection = null;
+  if (request()->routeIs('employee.dashboard')) $openSection = 'dashboard';
+  elseif (request()->routeIs('employee.profile') || request()->routeIs('supervisor.profile')) $openSection = 'profile';
+  elseif (request()->routeIs('employee.assistant') || request()->routeIs('supervisor.assistant')) $openSection = 'assistant';
+  elseif (request()->is('employee/attendance*') || request()->is('employee/face*') || request()->is('employee/ot-claims*') || request()->is('employee/overtime-requests*') || request()->is('employee/penalties*')) $openSection = 'attendance';
+  elseif (request()->is('employee/leave*') && !request()->is('supervisor/leave*')) $openSection = 'leave';
+  elseif (request()->is('employee/payroll*')) $openSection = 'payroll';
+  elseif (request()->is('employee/training*') || request()->is('employee/onboarding*') || request()->is('employee/appraisal*') || request()->routeIs('employee.kpis.*')) $openSection = 'performance';
+  elseif ($isSupervisor && (request()->is('supervisor/*') || request()->is('employee/ot-claims-inbox*') || request()->is('employee/overtime_inbox*')) && !request()->routeIs('supervisor.profile')) $openSection = 'team';
+@endphp
+
 <aside class="sidebar">
-
-  {{-- DASHBOARD --}}
-  <div class="sidebar-group open">
-    <a href="{{ route('employee.dashboard') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-chart-pie"></i>
-        <span>Dashboard</span>
-      </div>
+  {{-- ==========================================
+       MAIN NAVIGATION (Everyone sees this)
+       ========================================== --}}
+  <div class="sidebar-group {{ $openSection === 'dashboard' ? 'open' : '' }}">
+    <a href="{{ route('employee.dashboard') }}" class="sidebar-toggle sidebar-quick-link {{ $openSection === 'dashboard' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-chart-pie"></i><span>Dashboard</span></div>
     </a>
   </div>
 
-  {{-- PROFILE --}}
-  <div class="sidebar-group">
-    <a href="{{ route('supervisor.profile') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-user"></i>
-        <span>Profile</span>
-      </div>
+  <div class="sidebar-group {{ $openSection === 'profile' ? 'open' : '' }}">
+    <a href="{{ route($isSupervisor ? 'supervisor.profile' : 'employee.profile') }}" class="sidebar-toggle sidebar-quick-link {{ $openSection === 'profile' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-user-circle"></i><span>My Profile</span></div>
     </a>
   </div>
 
-  {{-- ONBOARDING --}}
-  <div class="sidebar-group">
-    <a href="{{ route('employee.onboarding.index') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-list-check"></i>
-        <span>Onboarding</span>
-      </div>
-    </a>
-  </div>
-
-  {{-- TRAINING --}}
-  <div class="sidebar-group">
-    <a href="#" class="sidebar-toggle">
-      <div class="left">
-        <i class="fa-solid fa-graduation-cap"></i>
-        <span>Training</span>
-      </div>
-      <i class="fa-solid fa-chevron-right arrow"></i>
-    </a>
-    <ul class="submenu">
-      <li><a href="{{ route('employee.training.index') }}">Training Overview</a></li>
-    </ul>
-  </div>
-
-  {{-- ATTENDANCE --}}
-  <div class="sidebar-group">
-    <a href="#" class="sidebar-toggle">
-      <div class="left">
-        <i class="fa-solid fa-user-clock"></i>
-        <span>Attendance</span>
-      </div>
-      <i class="fa-solid fa-chevron-right arrow"></i>
-    </a>
-    <ul class="submenu">
-      <li><a href="{{ route('employee.attendance.log') }}">Daily Log</a></li>
-      <li><a href="{{ route('employee.face.enroll') }}">Face Enrollment</a></li>
-      <li><a href="{{ route('employee.face.verify.form') }}">Verify My Face</a></li>
-    </ul>
-  </div>
-
-  {{-- OT CLAIMS: driven by config/nav.php and role --}}
-  @php
-    $role = strtolower(Auth::user()->role ?? 'supervisor');
-    $otItems = collect(config('nav.ot_claims.items', []))
-      ->filter(fn($i) => in_array($role, $i['roles'] ?? [], true))
-      ->values();
-  @endphp
-  @if($otItems->count())
-    <div class="sidebar-group sidebar-group-ot open">
-      <a href="#" class="sidebar-toggle">
-        <div class="left">
-          <i class="fa-solid fa-business-time"></i>
-          <span>OT Claims</span>
-        </div>
-        <i class="fa-solid fa-chevron-down arrow"></i>
-      </a>
-      <ul class="submenu submenu-ot">
-        @foreach($otItems as $item)
-          <li>
-            <a href="{{ route($item['route']) }}">
-              {{ $item['title'] }}
-            </a>
-          </li>
-        @endforeach
-      </ul>
-    </div>
-  @endif
-
-  {{-- LEAVE --}}
-  <div class="sidebar-group">
-    <a href="{{ route('employee.leave.apply') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-plane-departure"></i>
-        <span>Leave</span>
-      </div>
-    </a>
-  </div>
-
-  {{-- PAYROLL --}}
-  <div class="sidebar-group">
-    <a href="{{ route('employee.payroll.payslips') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-file-invoice-dollar"></i>
-        <span>Payroll</span>
-      </div>
+  <div class="sidebar-group {{ $openSection === 'assistant' ? 'open' : '' }}">
+    <a href="{{ route('employee.assistant') }}" class="sidebar-toggle sidebar-quick-link {{ $openSection === 'assistant' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-robot"></i><span>AI Assistant</span></div>
     </a>
   </div>
 
   {{-- ==========================================
-       PERFORMANCE APPRAISALS
+       MY HR: SELF SERVICE (Everyone sees this)
        ========================================== --}}
-       
-  {{-- 1. Personal Appraisals (Self-Evaluations) --}}
-  <div class="sidebar-group">
-    <a href="{{ route('employee.kpis.self-eval') }}" class="sidebar-toggle sidebar-quick-link">
+  <div style="padding: 20px 20px 5px; font-size: 11px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px;">MY HR</div>
+
+  <div class="sidebar-group {{ $openSection === 'attendance' ? 'open' : '' }}">
+    <a href="#" class="sidebar-toggle {{ $openSection === 'attendance' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-clock"></i><span>Attendance & OT</span></div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      <li><a href="{{ route('employee.attendance.log') }}" class="{{ request()->routeIs('employee.attendance.log') ? 'active' : '' }}">Daily Log</a></li>
+      <li><a href="{{ route('employee.face.verify.form') }}" class="{{ request()->routeIs('employee.face.verify.form') ? 'active' : '' }}">Face Recognition</a></li>
+      <li><a href="{{ route('employee.overtime_requests.index') }}" class="{{ request()->routeIs('employee.overtime_requests.index') ? 'active' : '' }}">Request Overtime</a></li>
+      <li><a href="{{ route('employee.ot_claims.index') }}" class="{{ request()->routeIs('employee.ot_claims.index') ? 'active' : '' }}">My OT Claims</a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-group {{ $openSection === 'leave' ? 'open' : '' }}">
+    <a href="#" class="sidebar-toggle {{ $openSection === 'leave' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-plane-departure"></i><span>Leave</span></div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      <li><a href="{{ route('employee.leave.apply') }}" class="{{ request()->routeIs('employee.leave.apply') ? 'active' : '' }}">Apply Leave</a></li>
+      <li><a href="{{ route('employee.leave.balance') }}" class="{{ request()->routeIs('employee.leave.balance') ? 'active' : '' }}">Leave Balance</a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-group {{ $openSection === 'payroll' ? 'open' : '' }}">
+    <a href="#" class="sidebar-toggle {{ $openSection === 'payroll' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-wallet"></i><span>Payroll</span></div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      <li><a href="{{ route('employee.payroll.payslips') }}" class="{{ request()->routeIs('employee.payroll.payslips') ? 'active' : '' }}">My Payslips</a></li>
+      <li><a href="{{ route('employee.payroll.tax') }}" class="{{ request()->routeIs('employee.payroll.tax') ? 'active' : '' }}">Tax Documents</a></li>
+    </ul>
+  </div>
+
+  <div class="sidebar-group {{ $openSection === 'performance' ? 'open' : '' }}">
+    <a href="#" class="sidebar-toggle {{ $openSection === 'performance' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-star-half-stroke"></i><span>Performance & Growth</span></div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      <li><a href="{{ route('employee.onboarding.index') }}" class="{{ request()->routeIs('employee.onboarding.index') ? 'active' : '' }}">My Onboarding</a></li>
+      <li><a href="{{ route('employee.training.index') }}" class="{{ request()->routeIs('employee.training.index') ? 'active' : '' }}">My Training</a></li>
+      <li><a href="{{ route('employee.kpis.self-eval') }}" class="{{ request()->routeIs('employee.kpis.self-eval') ? 'active' : '' }}">My Appraisals</a></li>
+    </ul>
+  </div>
+
+  {{-- ==========================================
+       TEAM MANAGEMENT (Only Supervisors see this)
+       ========================================== --}}
+  @if($isSupervisor)
+  <div style="padding: 20px 20px 5px; font-size: 11px; font-weight: 700; color: #6366f1; text-transform: uppercase; letter-spacing: 0.5px;">TEAM MANAGEMENT</div>
+  
+  <div class="sidebar-group {{ $openSection === 'team' ? 'open' : '' }}">
+    <a href="#" class="sidebar-toggle {{ $openSection === 'team' ? 'active' : '' }}">
+      <div class="left"><i class="fa-solid fa-users-gear"></i><span>Manager Actions</span></div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      {{-- Restored Missing Features --}}
+      <li><a href="{{ Route::has('manager.onboarding.index') ? route('manager.onboarding.index') : '#' }}" class="{{ request()->routeIs('manager.onboarding*') ? 'active' : '' }}">Team Onboarding</a></li>
+      <li><a href="#" class="">Job Requisitions</a> {{-- Replace '#' with your requisition route --}}</li>
+      <li><a href="{{ route('supervisor.appraisal.inbox') }}" class="{{ request()->routeIs('supervisor.appraisal.inbox') ? 'active' : '' }}">Manage Team KPIs</a></li>
+      
+      {{-- Approvals --}}
+      <li><a href="{{ route('employee.overtime_inbox.index') }}" class="{{ request()->routeIs('employee.overtime_inbox.index') ? 'active' : '' }}">Overtime Approvals</a></li>
+      <li><a href="{{ route('supervisor.leave.inbox') }}" class="{{ request()->routeIs('supervisor.leave.inbox') ? 'active' : '' }}">Leave Approvals</a></li>
+      <li><a href="{{ route('supervisor.penalty_removal.index') }}" class="{{ request()->routeIs('supervisor.penalty_removal.index') ? 'active' : '' }}">Penalty Removals</a></li>
+    </ul>
+  </div>
+  @endif
+
+  {{-- ==========================================
+       LOGOUT
+       ========================================== --}}
+  <div style="margin-top: 40px;" class="sidebar-group">
+    <a href="#" class="sidebar-toggle sidebar-quick-link" onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
       <div class="left">
-        <i class="fa-solid fa-star-half-stroke"></i>
-        <span>My Appraisals</span>
+        <i class="fa-solid fa-arrow-right-from-bracket" style="color: #ef4444;"></i>
+        <span style="color: #ef4444;">Logout</span>
       </div>
     </a>
   </div>
-
-  {{-- 2. Supervisor Inbox (Grading Team Appraisals) --}}
-  <div class="sidebar-group">
-    <a href="{{ route('supervisor.appraisal.inbox') }}" class="sidebar-toggle sidebar-quick-link">
-      <div class="left">
-        <i class="fa-solid fa-clipboard-user" style="color: #2563eb;"></i>
-        <span style="font-weight: 600; color: #0f172a;">Team Appraisals</span>
-      </div>
-    </a>
-  </div>
-
-  <div class="sidebar-divider"></div>
-
-  {{-- LOGOUT --}}
-  <div class="sidebar-main-item">
-    <a href="#" class="logout-link" onclick="event.preventDefault(); document.getElementById('logout-form').submit();">
-      <div class="left">
-        <i class="fa-solid fa-arrow-right-from-bracket"></i>
-        <span>Logout</span>
-      </div>
-    </a>
-  </div>
-  <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">
-    @csrf
-  </form>
+  <form id="logout-form" action="{{ route('logout') }}" method="POST" style="display:none;">@csrf</form>
 </aside>
 
 <script>
-(function () {
-  if (window.__HRMS_SUPERVISOR_SIDEBAR_INIT__) return;
-  window.__HRMS_SUPERVISOR_SIDEBAR_INIT__ = true;
-  document.addEventListener('DOMContentLoaded', function () {
-    var groups = document.querySelectorAll('.sidebar-group');
-    var toggles = document.querySelectorAll('.sidebar-toggle');
-    var STORAGE_KEY = 'hrms_sidebar_open_group';
-
-    function closeAll() {
-      groups.forEach(function (g) {
-        // Keep OT Claims group always open
-        if (g.classList.contains('sidebar-group-ot')) return;
-        g.classList.remove('open');
-        var t = g.querySelector('.sidebar-toggle');
-        if (t) t.setAttribute('aria-expanded', 'false');
-      });
-    }
-
-    toggles.forEach(function (btn, i) {
-      btn.setAttribute('role', 'button');
-      btn.setAttribute('tabindex', '0');
-      btn.addEventListener('click', function (e) {
-        if (btn.classList.contains('sidebar-quick-link')) return;
+  document.addEventListener("DOMContentLoaded", function () {
+    const toggles = document.querySelectorAll(".sidebar-toggle");
+    toggles.forEach(toggle => {
+      toggle.addEventListener("click", function (e) {
+        // If it's a direct link (like Dashboard/Profile), don't trigger the accordion animation
+        if(this.classList.contains('sidebar-quick-link')) return;
         e.preventDefault();
-        var group = btn.closest('.sidebar-group');
-        var isOpen = group.classList.contains('open');
-        closeAll();
-        if (!isOpen) {
-          group.classList.add('open');
-          btn.setAttribute('aria-expanded', 'true');
-          try { localStorage.setItem(STORAGE_KEY, String(i)); } catch (err) {}
-        } else {
-          try { localStorage.removeItem(STORAGE_KEY); } catch (err) {}
-        }
+        
+        // Close all other groups
+        document.querySelectorAll(".sidebar-group").forEach(g => {
+            if(g !== this.closest(".sidebar-group")) g.classList.remove("open");
+        });
+        
+        // Toggle the clicked group
+        const group = this.closest(".sidebar-group");
+        group.classList.toggle("open");
       });
     });
   });
-})();
 </script>

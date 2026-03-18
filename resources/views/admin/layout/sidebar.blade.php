@@ -34,20 +34,19 @@
         </ul>
     </div>
 
-  {{-- APPRAISAL --}}
+  {{-- PERFORMANCE APPRAISAL --}}
   <div class="sidebar-group {{ request()->is('admin/appraisal*') ? 'open' : '' }}">
-      <a href="#" class="sidebar-toggle">
-          <div class="left">
-              <i class="fa-solid fa-chart-line"></i>
-              <span>Appraisal</span>
-          </div>
-          <i class="fa-solid fa-chevron-right arrow"></i>
-      </a>
-      <ul class="submenu">
-          <li><a href="{{ route('admin.appraisal') }}">KPI Overview</a></li>
-          <li><a href="{{ route('admin.appraisal.add-kpi') }}">Add KPI Goals</a></li>
-          <li><a href="{{ route('admin.appraisal.employee-kpi-list') }}">Employee Reviews</a></li>
-      </ul>
+    <a href="#" class="sidebar-toggle">
+      <div class="left">
+        <i class="fa-solid fa-star-half-stroke"></i>
+        <span>Performance</span>
+      </div>
+      <i class="fa-solid fa-chevron-right arrow"></i>
+    </a>
+    <ul class="submenu">
+      <li><a href="{{ route('admin.appraisal') }}">Dashboard</a></li>
+      <li><a href="{{ route('admin.appraisal.add-kpi') }}">Initiate Review</a></li>
+    </ul>
   </div>
 
   {{-- TRAINING --}}
