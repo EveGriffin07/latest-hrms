@@ -430,6 +430,18 @@
     </div>
   </div>
 
+  {{-- Approve confirmation modal --}}
+  <div class="overlay" id="approve-overlay">
+    <div class="reject-modal-sheet">
+      <h3 class="reject-modal-title">Confirm Approval</h3>
+      <p class="reject-modal-desc" id="approve-confirm-text">Approve this leave request and send it to admin for final approval?</p>
+      <div class="reject-modal-footer">
+        <button type="button" id="approve-cancel" class="btn-sm btn-outline">Cancel</button>
+        <button type="button" id="approve-submit" class="btn-sm btn-approve"><i class="fa-solid fa-check"></i> Confirm</button>
+      </div>
+    </div>
+  </div>
+
   {{-- Reject modal (same structure as admin reject) --}}
   <div class="overlay" id="reject-overlay">
     <div class="reject-modal-sheet">
@@ -454,258 +466,216 @@
     </div>
   </div>
 
+  <form id="bulk-approve-form" method="POST" action="{{ route('supervisor.leave.bulk_approve') }}" style="display:none;">@csrf</form>
+  <form id="bulk-reject-form" method="POST" action="{{ route('supervisor.leave.bulk_reject') }}" style="display:none;">@csrf</form>
+
   <script>
     document.addEventListener('DOMContentLoaded', function () {
-      const overlay = document.getElementById('reject-overlay');
-      const form = document.getElementById('reject-form');
-      const reason = document.getElementById('reject-reason');
-      const cancelBtn = document.getElementById('reject-cancel');
-      const clearBtn = document.getElementById('reject-clear');
-      const submitBtn = document.getElementById('reject-submit');
+      const approveOverlay = document.getElementById('approve-overlay');
+      const approveCancel = document.getElementById('approve-cancel');
+      const approveSubmit = document.getElementById('approve-submit');
+      const approveConfirmText = document.getElementById('approve-confirm-text');
+      const rejectOverlay = document.getElementById('reject-overlay');
+      const rejectForm = document.getElementById('reject-form');
+      const rejectReason = document.getElementById('reject-reason');
+      const rejectCancel = document.getElementById('reject-cancel');
+      const rejectClear = document.getElementById('reject-clear');
+      const rejectSubmit = document.getElementById('reject-submit');
       const rejectQuick = document.getElementById('reject-quick');
       const rejectError = document.getElementById('reject-error');
+      const bulkApproveForm = document.getElementById('bulk-approve-form');
+      const bulkRejectForm = document.getElementById('bulk-reject-form');
 
       const QUICK_REPLIES = [
         'Missing supporting document.',
         'Apply earlier / notice period not met.',
         'Date range invalid / conflict with schedule.',
       ];
+      const DEFAULT_REJECT_REASON = QUICK_REPLIES[0];
+      let approveMode = 'single';
+      let pendingSingleApproveForm = null;
 
-      rejectQuick.innerHTML = QUICK_REPLIES.map(function (text) {
-        return '<button type="button" class="reject-chip" data-reply="' + text.replace(/"/g, '&quot;') + '">' + text + '</button>';
-      }).join('');
-
-      function toggleRejectSubmit() {
-        var hasText = reason.value.trim().length > 0;
-        submitBtn.disabled = !hasText;
-        rejectError.textContent = '';
+      function selectedVisibleIds() {
+        return Array.from(document.querySelectorAll('.pending-row-cb'))
+          .filter(function (cb) {
+            var tr = cb.closest('tr');
+            return cb.checked && tr && !tr.classList.contains('pending-row-hidden');
+          })
+          .map(function (cb) { return cb.value; });
       }
 
-      rejectQuick.querySelectorAll('.reject-chip').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var text = btn.getAttribute('data-reply') || btn.textContent;
-          reason.value = text;
-          toggleRejectSubmit();
-          reason.focus();
+      function updateBulkState() {
+        var visible = Array.from(document.querySelectorAll('.pending-row-cb')).filter(function (cb) {
+          var tr = cb.closest('tr');
+          return tr && !tr.classList.contains('pending-row-hidden');
         });
-      });
-
-      if (clearBtn) {
-        clearBtn.addEventListener('click', function () {
-          reason.value = '';
-          toggleRejectSubmit();
-          reason.focus();
-        });
+        var checked = visible.filter(function (cb) { return cb.checked; });
+        var selectAll = document.getElementById('supervisor-select-all');
+        var countEl = document.getElementById('supervisor-selected-count');
+        var bulkApproveBtn = document.getElementById('supervisor-bulk-approve');
+        var bulkRejectBtn = document.getElementById('supervisor-bulk-reject');
+        if (countEl) countEl.textContent = checked.length + ' selected';
+        if (bulkApproveBtn) bulkApproveBtn.disabled = checked.length === 0;
+        if (bulkRejectBtn) bulkRejectBtn.disabled = checked.length === 0;
+        if (selectAll) {
+          selectAll.checked = visible.length > 0 && checked.length === visible.length;
+          selectAll.indeterminate = checked.length > 0 && checked.length < visible.length;
+        }
       }
 
-      reason.addEventListener('input', toggleRejectSubmit);
-
-      // Quick vs Normal decision toggle (default: Quick = coming 7 days only)
+      // Rush vs Normal tabs
       (function () {
         var toggleWrap = document.querySelector('.card .decision-toggle');
         if (!toggleWrap) return;
-        var rows = document.querySelectorAll('.leave-table tbody tr.pending-row');
-        var quickBtn = toggleWrap.querySelector('[data-mode="quick"]');
+        var rows = Array.from(document.querySelectorAll('tr.pending-row'));
+        var rushBtn = toggleWrap.querySelector('[data-mode="quick"]');
         var normalBtn = toggleWrap.querySelector('[data-mode="normal"]');
         function setMode(mode) {
-          var isQuick = mode === 'quick';
-          quickBtn.classList.toggle('active', isQuick);
-          quickBtn.setAttribute('aria-pressed', isQuick ? 'true' : 'false');
-          normalBtn.classList.toggle('active', !isQuick);
-          normalBtn.setAttribute('aria-pressed', !isQuick ? 'true' : 'false');
+          var isRush = mode === 'quick';
+          rushBtn.classList.toggle('active', isRush);
+          rushBtn.setAttribute('aria-pressed', isRush ? 'true' : 'false');
+          normalBtn.classList.toggle('active', !isRush);
+          normalBtn.setAttribute('aria-pressed', !isRush ? 'true' : 'false');
           rows.forEach(function (tr) {
             var coming7 = tr.getAttribute('data-coming-7-days') === '1';
-            if (isQuick) {
-              tr.classList.toggle('pending-row-hidden', !coming7);
-            } else {
-              tr.classList.remove('pending-row-hidden');
+            var show = isRush ? coming7 : !coming7;
+            tr.classList.toggle('pending-row-hidden', !show);
+            if (!show) {
+              var cb = tr.querySelector('.pending-row-cb');
+              if (cb) cb.checked = false;
             }
           });
+          updateBulkState();
         }
-        quickBtn.addEventListener('click', function () { setMode('quick'); });
+        rushBtn.addEventListener('click', function () { setMode('quick'); });
         normalBtn.addEventListener('click', function () { setMode('normal'); });
         setMode('quick');
       })();
 
-      // Multi-select and bulk actions (supervisor)
-      (function () {
-        var selectAll = document.getElementById('supervisor-select-all');
-        var bulkApprove = document.getElementById('supervisor-bulk-approve');
-        var bulkReject = document.getElementById('supervisor-bulk-reject');
-        var selectedCountEl = document.getElementById('supervisor-selected-count');
-        var rejectForm = document.getElementById('reject-form');
-        var baseRejectUrl = "{{ url('supervisor/leave') }}";
-
-        function getVisibleCheckboxes() {
-          return Array.prototype.filter.call(document.querySelectorAll('.pending-row-cb'), function (cb) {
-            return cb.closest('tr') && !cb.closest('tr').classList.contains('pending-row-hidden');
+      var selectAll = document.getElementById('supervisor-select-all');
+      if (selectAll) {
+        selectAll.addEventListener('change', function () {
+          Array.from(document.querySelectorAll('.pending-row-cb')).forEach(function (cb) {
+            var tr = cb.closest('tr');
+            if (tr && !tr.classList.contains('pending-row-hidden')) cb.checked = selectAll.checked;
           });
-        }
-
-        function updateBulkState() {
-          var visible = getVisibleCheckboxes();
-          var checked = visible.filter(function (cb) { return cb.checked; });
-          var n = checked.length;
-          selectedCountEl.textContent = n + ' selected';
-          bulkApprove.disabled = n === 0;
-          bulkReject.disabled = n === 0;
-          selectAll.checked = visible.length > 0 && checked.length === visible.length;
-          selectAll.indeterminate = checked.length > 0 && checked.length < visible.length;
-        }
-
-        if (selectAll) {
-          selectAll.addEventListener('change', function () {
-            getVisibleCheckboxes().forEach(function (cb) { cb.checked = selectAll.checked; });
-            updateBulkState();
-          });
-        }
-        document.querySelectorAll('.pending-row-cb').forEach(function (cb) {
-          cb.addEventListener('change', updateBulkState);
+          updateBulkState();
         });
-        document.querySelector('.leave-table tbody').addEventListener('change', function (e) {
-          if (e.target.classList.contains('pending-row-cb')) updateBulkState();
-        });
-
-        bulkApprove.addEventListener('click', function () {
-          var ids = getVisibleCheckboxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
-          if (ids.length === 0) return;
-          bulkApprove.disabled = true;
-          var done = 0;
-          function runNext() {
-            if (done >= ids.length) { updateBulkState(); return; }
-            var id = ids[done];
-            var row = document.querySelector('tr.pending-row[data-leave-id="' + id + '"]');
-            var form = row && row.querySelector('form.supervisor-approve-form');
-            if (!form) { done++; runNext(); return; }
-            fetch(form.action, { method: 'POST', body: new FormData(form), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-              .then(function (r) { if (!r.ok) throw new Error('Failed'); return r.text(); })
-              .then(function () {
-                if (row) row.remove();
-                decrementSupervisorPendingCount();
-                done++;
-                runNext();
-              })
-              .catch(function () { bulkApprove.disabled = false; alert('One or more approvals failed.'); });
-          }
-          runNext();
-        });
-
-        bulkReject.addEventListener('click', function () {
-          var ids = getVisibleCheckboxes().filter(function (cb) { return cb.checked; }).map(function (cb) { return cb.value; });
-          if (ids.length === 0) return;
-          rejectForm.dataset.bulkIds = ids.join(',');
-          rejectForm.dataset.leaveId = '';
-          reason.value = '';
-          rejectError.textContent = '';
-          toggleRejectSubmit();
-          overlay.classList.add('open');
-          reason.focus();
-        });
-
-        form.addEventListener('submit', function (e) {
-          if (e.target !== rejectForm) return;
-          e.preventDefault();
-          if (!reason.value.trim()) {
-            rejectError.textContent = 'Reason is required.';
-            return;
-          }
-          var bulkIds = (rejectForm.dataset.bulkIds || '').split(',').filter(Boolean);
-          if (bulkIds.length > 0) {
-            var submitBtn = rejectForm.querySelector('button[type="submit"]');
-            if (submitBtn) submitBtn.disabled = true;
-            var idx = 0;
-            function doNext() {
-              if (idx >= bulkIds.length) {
-                overlay.classList.remove('open');
-                rejectForm.dataset.bulkIds = '';
-                bulkIds.forEach(function (id) {
-                  var row = document.querySelector('tr.pending-row[data-leave-id="' + id + '"]');
-                  if (row) row.remove();
-                  decrementSupervisorPendingCount();
-                });
-                updateBulkState();
-                if (submitBtn) submitBtn.disabled = false;
-                return;
-              }
-              var id = bulkIds[idx];
-              var formData = new FormData();
-              formData.append('_token', document.querySelector('input[name="_token"]').value);
-              formData.append('reject_reason', reason.value.trim());
-              fetch(baseRejectUrl + '/' + id + '/reject', { method: 'POST', body: formData, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-                .then(function (r) { if (!r.ok) throw new Error('Failed'); return r.text(); })
-                .then(function () { idx++; doNext(); })
-                .catch(function () { if (submitBtn) submitBtn.disabled = false; rejectError.textContent = 'Reject failed for one or more.'); });
-            }
-            doNext();
-            return;
-          }
-          var leaveId = rejectForm.dataset.leaveId;
-          var row = leaveId ? document.querySelector('tr.pending-row[data-leave-id="' + leaveId + '"]') : null;
-          var submitBtn = rejectForm.querySelector('button[type="submit"]');
-          if (submitBtn) submitBtn.disabled = true;
-          fetch(rejectForm.action, { method: 'POST', body: new FormData(rejectForm), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(function (r) { if (!r.ok) throw new Error('Failed'); return r.text(); })
-            .then(function () {
-              overlay.classList.remove('open');
-              if (row) row.remove();
-              decrementSupervisorPendingCount();
-              updateBulkState();
-            })
-            .catch(function () { if (submitBtn) submitBtn.disabled = false; rejectError.textContent = 'Reject failed. Try again.'; });
-        });
-        updateBulkState();
-      })();
-
-      document.querySelectorAll('.btn-reject[data-id]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var id = this.getAttribute('data-id');
-          form.action = "{{ url('supervisor/leave') }}/" + id + "/reject";
-          form.dataset.leaveId = id;
-          form.dataset.bulkIds = '';
-          reason.value = '';
-          rejectError.textContent = '';
-          toggleRejectSubmit();
-          overlay.classList.add('open');
-          reason.focus();
-        });
-      });
-
-      function decrementSupervisorPendingCount() {
-        var el = document.getElementById('supervisor-pending-count');
-        if (el) { var n = parseInt(el.textContent, 10); el.textContent = isNaN(n) ? 0 : Math.max(0, n - 1); }
       }
+      Array.from(document.querySelectorAll('.pending-row-cb')).forEach(function (cb) {
+        cb.addEventListener('change', updateBulkState);
+      });
+      updateBulkState();
 
-      document.querySelectorAll('form.supervisor-approve-form').forEach(function (approveForm) {
-        approveForm.addEventListener('submit', function (e) {
+      // Single approve opens confirm modal
+      Array.from(document.querySelectorAll('form.supervisor-approve-form')).forEach(function (frm) {
+        frm.addEventListener('submit', function (e) {
           e.preventDefault();
-          var form = this;
-          var row = form.closest('tr');
-          var submitBtn = form.querySelector('button[type="submit"]');
-          if (submitBtn) submitBtn.disabled = true;
-          fetch(form.action, { method: 'POST', body: new FormData(form), headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(function (r) { if (!r.ok) throw new Error('Failed'); return r.text(); })
-            .then(function () {
-              if (row) row.remove();
-              decrementSupervisorPendingCount();
-            })
-            .catch(function () { if (submitBtn) submitBtn.disabled = false; alert('Approval failed. Please try again.'); });
+          approveMode = 'single';
+          pendingSingleApproveForm = frm;
+          approveConfirmText.textContent = 'Approve this leave request and send it to admin for final approval?';
+          approveOverlay.classList.add('open');
         });
       });
-
-      cancelBtn.addEventListener('click', function () {
-        overlay.classList.remove('open');
+      document.getElementById('supervisor-bulk-approve')?.addEventListener('click', function () {
+        var ids = selectedVisibleIds();
+        if (!ids.length) return;
+        approveMode = 'bulk';
+        pendingSingleApproveForm = null;
+        approveConfirmText.textContent = 'Approve ' + ids.length + ' selected leave request(s) and send them to admin for final approval?';
+        approveOverlay.classList.add('open');
       });
-      overlay.addEventListener('click', function (e) {
-        if (e.target === overlay) overlay.classList.remove('open');
+      approveSubmit?.addEventListener('click', function () {
+        if (approveMode === 'single' && pendingSingleApproveForm) {
+          approveOverlay.classList.remove('open');
+          pendingSingleApproveForm.submit();
+          return;
+        }
+        if (approveMode === 'bulk') {
+          var ids = selectedVisibleIds();
+          bulkApproveForm.querySelectorAll('input[name="leave_ids[]"]').forEach(function (el) { el.remove(); });
+          ids.forEach(function (id) {
+            var input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'leave_ids[]';
+            input.value = id;
+            bulkApproveForm.appendChild(input);
+          });
+          approveOverlay.classList.remove('open');
+          if (ids.length) bulkApproveForm.submit();
+        }
       });
+      approveCancel?.addEventListener('click', function () { approveOverlay.classList.remove('open'); });
+      approveOverlay?.addEventListener('click', function (e) { if (e.target === approveOverlay) approveOverlay.classList.remove('open'); });
 
-      form.addEventListener('submit', function (e) {
-        if (!reason.value.trim()) {
+      // Reject modal
+      rejectQuick.innerHTML = QUICK_REPLIES.map(function (text) {
+        return '<button type="button" class="reject-chip" data-reply="' + text.replace(/"/g, '&quot;') + '">' + text + '</button>';
+      }).join('');
+      function toggleRejectSubmit() {
+        rejectSubmit.disabled = rejectReason.value.trim().length === 0;
+        rejectError.textContent = '';
+      }
+      rejectQuick.querySelectorAll('.reject-chip').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          rejectReason.value = btn.getAttribute('data-reply') || btn.textContent;
+          toggleRejectSubmit();
+          rejectReason.focus();
+        });
+      });
+      rejectClear?.addEventListener('click', function () {
+        rejectReason.value = '';
+        toggleRejectSubmit();
+        rejectReason.focus();
+      });
+      rejectReason.addEventListener('input', toggleRejectSubmit);
+      Array.from(document.querySelectorAll('.btn-reject[data-id]')).forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.getAttribute('data-id');
+          rejectForm.action = "{{ url('supervisor/leave') }}/" + id + "/reject";
+          rejectForm.dataset.mode = 'single';
+          rejectReason.value = DEFAULT_REJECT_REASON;
+          toggleRejectSubmit();
+          rejectOverlay.classList.add('open');
+        });
+      });
+      document.getElementById('supervisor-bulk-reject')?.addEventListener('click', function () {
+        var ids = selectedVisibleIds();
+        if (!ids.length) return;
+        rejectForm.dataset.mode = 'bulk';
+        rejectForm.dataset.bulkIds = ids.join(',');
+        rejectReason.value = DEFAULT_REJECT_REASON;
+        toggleRejectSubmit();
+        rejectOverlay.classList.add('open');
+      });
+      rejectForm.addEventListener('submit', function (e) {
+        if (!rejectReason.value.trim()) {
           e.preventDefault();
           rejectError.textContent = 'Reason is required.';
           return;
         }
+        if (rejectForm.dataset.mode === 'bulk') {
+          e.preventDefault();
+          var ids = (rejectForm.dataset.bulkIds || '').split(',').filter(Boolean);
+          bulkRejectForm.querySelectorAll('input[name="leave_ids[]"], input[name="reject_reason"]').forEach(function (el) { el.remove(); });
+          ids.forEach(function (id) {
+            var input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'leave_ids[]';
+            input.value = id;
+            bulkRejectForm.appendChild(input);
+          });
+          var reasonInput = document.createElement('input');
+          reasonInput.type = 'hidden';
+          reasonInput.name = 'reject_reason';
+          reasonInput.value = rejectReason.value.trim();
+          bulkRejectForm.appendChild(reasonInput);
+          rejectOverlay.classList.remove('open');
+          if (ids.length) bulkRejectForm.submit();
+        }
       });
+      rejectCancel?.addEventListener('click', function () { rejectOverlay.classList.remove('open'); });
+      rejectOverlay?.addEventListener('click', function (e) { if (e.target === rejectOverlay) rejectOverlay.classList.remove('open'); });
 
       // Leave balance pop-out card
       var balanceOverlay = document.getElementById('balance-card-overlay');

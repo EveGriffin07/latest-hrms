@@ -132,7 +132,10 @@ class EmployeeOvertimeClaimController extends Controller
     {
         $employee = $this->currentEmployee();
         $submitNow = $request->boolean('submit_now');
-        if ($submitNow && !OtClaimApproverResolver::resolve($employee, $request->input('route_to_area_id') ? (int) $request->input('route_to_area_id') : null)) {
+        $user = Auth::user();
+        $role = strtolower(trim((string) ($user?->role ?? '')));
+        $isSupervisorRequester = $role === 'supervisor';
+        if ($submitNow && !$isSupervisorRequester && !OtClaimApproverResolver::resolve($employee, $request->input('route_to_area_id') ? (int) $request->input('route_to_area_id') : null)) {
             throw ValidationException::withMessages(['date' => 'No supervisor assigned to your department. Contact HR.']);
         }
 
@@ -182,10 +185,14 @@ class EmployeeOvertimeClaimController extends Controller
         $attachmentPath = $this->storeAttachment($request);
         $noProofFlag = false;
 
-        $status = $submitNow ? OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR : OvertimeClaim::STATUS_DRAFT;
+        $status = $submitNow
+            ? ($isSupervisorRequester ? OvertimeClaim::STATUS_ADMIN_PENDING : OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR)
+            : OvertimeClaim::STATUS_DRAFT;
         $routingAreaId = isset($validated['route_to_area_id']) ? (int) $validated['route_to_area_id'] : null;
         $areaId = $routingAreaId ?? $employee->user->area_id ?? null;
-        $approverId = $status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR ? OtClaimApproverResolver::resolve($employee, $routingAreaId) : null;
+        $approverId = $status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR
+            ? OtClaimApproverResolver::resolve($employee, $routingAreaId)
+            : ($status === OvertimeClaim::STATUS_ADMIN_PENDING ? Auth::id() : null);
         $this->syncUserDeptId($employee);
 
         $claim = DB::transaction(function () use ($employee, $validated, $period, $status, $proofPath, $attachmentPath, $noProofFlag, $areaId, $approverId) {
@@ -204,7 +211,7 @@ class EmployeeOvertimeClaimController extends Controller
                 'supporting_info' => $validated['supporting_info'] ?? null,
                 'attachment_path' => $attachmentPath,
                 'status' => $status,
-                'submitted_at' => $status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR ? now() : null,
+                'submitted_at' => in_array($status, [OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR, OvertimeClaim::STATUS_ADMIN_PENDING], true) ? now() : null,
                 'supervisor_id' => $approverId,
                 'location_type' => $validated['location_type'],
                 'location_other' => $validated['location_other'] ?? null,
@@ -212,16 +219,18 @@ class EmployeeOvertimeClaimController extends Controller
                 'missing_proof_reason' => $validated['missing_proof_reason'] ?? null,
                 'no_proof_flag' => $noProofFlag,
             ]);
-            if ($status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR) {
+            if (in_array($status, [OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR, OvertimeClaim::STATUS_ADMIN_PENDING], true)) {
                 OtClaimAudit::log(OtClaimAudit::ACTION_SUBMITTED, $claim, null, $claim->status, [], 'OT claim submitted');
                 OtClaimNotifier::onSubmitted($claim->load('employee.user'));
             }
             return $claim;
         });
 
-        $message = $status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR
-            ? 'OT claim submitted and sent to your supervisor.'
-            : 'OT claim saved as draft.';
+        $message = $status === OvertimeClaim::STATUS_ADMIN_PENDING
+            ? 'OT claim submitted and sent to admin.'
+            : ($status === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR
+                ? 'OT claim submitted and sent to your supervisor.'
+                : 'OT claim saved as draft.');
         return redirect()->route('employee.ot_claims.index')->with('success', $message);
     }
 
@@ -305,7 +314,10 @@ class EmployeeOvertimeClaimController extends Controller
             abort(403, 'You can only edit your own claim when it is draft or returned.');
         }
         $submitNow = $request->boolean('submit_now');
-        if ($submitNow && !OtClaimApproverResolver::resolve($employee, $request->input('route_to_area_id') ? (int) $request->input('route_to_area_id') : null)) {
+        $user = Auth::user();
+        $role = strtolower(trim((string) ($user?->role ?? '')));
+        $isSupervisorRequester = $role === 'supervisor';
+        if ($submitNow && !$isSupervisorRequester && !OtClaimApproverResolver::resolve($employee, $request->input('route_to_area_id') ? (int) $request->input('route_to_area_id') : null)) {
             throw ValidationException::withMessages(['date' => 'No supervisor assigned to your department. Contact HR.']);
         }
         $rules = [
@@ -354,11 +366,17 @@ class EmployeeOvertimeClaimController extends Controller
         $attachmentPath = $this->storeAttachment($request, $claim->attachment_path);
         $noProofFlag = false;
 
-        $newStatus = $submitNow ? OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR : $claim->status;
+        $newStatus = $submitNow
+            ? ($isSupervisorRequester ? OvertimeClaim::STATUS_ADMIN_PENDING : OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR)
+            : $claim->status;
         $beforeStatus = $claim->status;
         $routingAreaId = isset($validated['route_to_area_id']) ? (int) $validated['route_to_area_id'] : null;
         $areaId = $routingAreaId ?? $employee->user->area_id ?? $claim->area_id;
-        $approverId = $submitNow ? OtClaimApproverResolver::resolve($employee, $routingAreaId) : $claim->supervisor_id;
+        $approverId = $submitNow
+            ? ($newStatus === OvertimeClaim::STATUS_SUBMITTED_TO_SUPERVISOR
+                ? OtClaimApproverResolver::resolve($employee, $routingAreaId)
+                : Auth::id())
+            : $claim->supervisor_id;
         $this->syncUserDeptId($employee);
 
         DB::transaction(function () use ($claim, $validated, $period, $newStatus, $beforeStatus, $submitNow, $proofPath, $attachmentPath, $noProofFlag, $areaId, $approverId) {
@@ -391,7 +409,9 @@ class EmployeeOvertimeClaimController extends Controller
             }
         });
 
-        $message = $submitNow ? 'OT claim resubmitted to your supervisor.' : 'OT claim updated.';
+        $message = $submitNow
+            ? ($newStatus === OvertimeClaim::STATUS_ADMIN_PENDING ? 'OT claim submitted and sent to admin.' : 'OT claim resubmitted to your supervisor.')
+            : 'OT claim updated.';
         return redirect()->route('employee.ot_claims.index')->with('success', $message);
     }
 

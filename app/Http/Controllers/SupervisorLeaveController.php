@@ -11,6 +11,71 @@ use Illuminate\Support\Facades\Auth;
 class SupervisorLeaveController extends Controller
 {
     /**
+     * Shared approval mutation for supervisor workflows.
+     */
+    private function approveLeaveAsSupervisor(LeaveRequest $leave): void
+    {
+        $beforeStatus = $leave->leave_status;
+        $leave->update([
+            'leave_status' => LeaveRequest::STATUS_PENDING_ADMIN,
+            'supervisor_approved_by' => Auth::id(),
+            'supervisor_approved_at' => now(),
+        ]);
+        $afterStatus = $leave->leave_status;
+
+        $typeName = $leave->leaveType->leave_name ?? 'Leave';
+        $dates = $leave->start_date->format('Y-m-d') . ' to ' . $leave->end_date->format('Y-m-d');
+        AuditLogService::log(
+            AuditLogService::CATEGORY_LEAVE,
+            'leave_supervisor_approved',
+            AuditLogService::STATUS_SUCCESS,
+            'Supervisor approved leave and sent to admin (' . $typeName . ', ' . $dates . ')',
+            [
+                'leave_request_id' => $leave->leave_request_id,
+                'employee_id' => $leave->employee_id,
+                'before_status' => $beforeStatus,
+                'after_status' => $afterStatus,
+            ],
+            $leave->employee_id,
+            AuditLogService::SEVERITY_INFO,
+            'Leave',
+            $leave->leave_request_id
+        );
+    }
+
+    /**
+     * Shared rejection mutation for supervisor workflows.
+     */
+    private function rejectLeaveAsSupervisor(LeaveRequest $leave, string $reason): void
+    {
+        $beforeStatus = $leave->leave_status;
+        $leave->update([
+            'leave_status' => LeaveRequest::STATUS_REJECTED,
+            'reject_reason' => $reason,
+            'decision_at' => now(),
+        ]);
+        $afterStatus = $leave->leave_status;
+
+        $typeName = $leave->leaveType->leave_name ?? 'Leave';
+        AuditLogService::log(
+            AuditLogService::CATEGORY_LEAVE,
+            'leave_request_rejected',
+            AuditLogService::STATUS_FAILED,
+            'Supervisor rejected leave (' . $typeName . '): ' . $reason,
+            [
+                'leave_request_id' => $leave->leave_request_id,
+                'employee_id' => $leave->employee_id,
+                'before_status' => $beforeStatus,
+                'after_status' => $afterStatus,
+            ],
+            $leave->employee_id,
+            AuditLogService::SEVERITY_INFO,
+            'Leave',
+            $leave->leave_request_id
+        );
+    }
+
+    /**
      * Leave requests pending at this supervisor, and all leave this supervisor has approved or rejected.
      */
     public function index()
@@ -79,25 +144,7 @@ class SupervisorLeaveController extends Controller
             return back()->withErrors(['leave' => 'Only pending requests can be approved.']);
         }
 
-        $leave->update([
-            'leave_status' => LeaveRequest::STATUS_PENDING_ADMIN,
-            'supervisor_approved_by' => Auth::id(),
-            'supervisor_approved_at' => now(),
-        ]);
-
-        $typeName = $leave->leaveType->leave_name ?? 'Leave';
-        $dates = $leave->start_date->format('Y-m-d') . ' to ' . $leave->end_date->format('Y-m-d');
-        AuditLogService::log(
-            AuditLogService::CATEGORY_LEAVE,
-            'leave_supervisor_approved',
-            AuditLogService::STATUS_SUCCESS,
-            'Supervisor approved leave and sent to admin (' . $typeName . ', ' . $dates . ')',
-            ['leave_request_id' => $leave->leave_request_id, 'employee_id' => $leave->employee_id],
-            $leave->employee_id,
-            AuditLogService::SEVERITY_INFO,
-            'Leave',
-            $leave->leave_request_id
-        );
+        $this->approveLeaveAsSupervisor($leave);
 
         return back()->with('success', 'Leave approved and sent to admin for final approval.');
     }
@@ -118,26 +165,71 @@ class SupervisorLeaveController extends Controller
             return back()->withErrors(['leave' => 'Only pending requests can be rejected.']);
         }
 
-        $leave->update([
-            'leave_status' => LeaveRequest::STATUS_REJECTED,
-            'reject_reason' => $request->input('reject_reason'),
-            'decision_at' => now(),
-        ]);
-
-        $typeName = $leave->leaveType->leave_name ?? 'Leave';
-        AuditLogService::log(
-            AuditLogService::CATEGORY_LEAVE,
-            'leave_request_rejected',
-            AuditLogService::STATUS_FAILED,
-            'Supervisor rejected leave (' . $typeName . '): ' . $request->input('reject_reason'),
-            ['leave_request_id' => $leave->leave_request_id, 'employee_id' => $leave->employee_id],
-            $leave->employee_id,
-            AuditLogService::SEVERITY_INFO,
-            'Leave',
-            $leave->leave_request_id
-        );
+        $this->rejectLeaveAsSupervisor($leave, (string) $request->input('reject_reason'));
 
         return back()->with('success', 'Leave request rejected.');
+    }
+
+    /**
+     * Bulk approve selected pending leave requests assigned to this supervisor.
+     */
+    public function bulkApprove(Request $request)
+    {
+        $validated = $request->validate([
+            'leave_ids' => ['required', 'array', 'min:1'],
+            'leave_ids.*' => ['integer', 'exists:leave_requests,leave_request_id'],
+        ]);
+
+        $ids = array_unique($validated['leave_ids']);
+        $approved = 0;
+        foreach ($ids as $id) {
+            $leave = LeaveRequest::with('leaveType')->find($id);
+            if (!$leave) {
+                continue;
+            }
+            if ((int) $leave->supervisor_id !== (int) Auth::id()) {
+                continue;
+            }
+            if ($leave->leave_status !== LeaveRequest::STATUS_PENDING) {
+                continue;
+            }
+            $this->approveLeaveAsSupervisor($leave);
+            $approved++;
+        }
+
+        return back()->with('success', $approved . ' leave request(s) approved and sent to admin.');
+    }
+
+    /**
+     * Bulk reject selected pending leave requests assigned to this supervisor.
+     */
+    public function bulkReject(Request $request)
+    {
+        $validated = $request->validate([
+            'leave_ids' => ['required', 'array', 'min:1'],
+            'leave_ids.*' => ['integer', 'exists:leave_requests,leave_request_id'],
+            'reject_reason' => ['required', 'string', 'max:500'],
+        ]);
+
+        $ids = array_unique($validated['leave_ids']);
+        $reason = (string) $validated['reject_reason'];
+        $rejected = 0;
+        foreach ($ids as $id) {
+            $leave = LeaveRequest::with('leaveType')->find($id);
+            if (!$leave) {
+                continue;
+            }
+            if ((int) $leave->supervisor_id !== (int) Auth::id()) {
+                continue;
+            }
+            if ($leave->leave_status !== LeaveRequest::STATUS_PENDING) {
+                continue;
+            }
+            $this->rejectLeaveAsSupervisor($leave, $reason);
+            $rejected++;
+        }
+
+        return back()->with('success', $rejected . ' leave request(s) rejected.');
     }
 
     /**
@@ -152,9 +244,11 @@ class SupervisorLeaveController extends Controller
             return back()->withErrors(['leave' => 'Only supervisor-approved requests can be uploaded to admin.']);
         }
 
+        $beforeStatus = $leave->leave_status;
         $leave->update([
             'leave_status' => LeaveRequest::STATUS_PENDING_ADMIN,
         ]);
+        $afterStatus = $leave->leave_status;
 
         $typeName = $leave->leaveType->leave_name ?? 'Leave';
         AuditLogService::log(
@@ -162,7 +256,12 @@ class SupervisorLeaveController extends Controller
             'leave_uploaded_to_admin',
             AuditLogService::STATUS_SUCCESS,
             'Leave uploaded to admin for approval (' . $typeName . ')',
-            ['leave_request_id' => $leave->leave_request_id, 'employee_id' => $leave->employee_id],
+            [
+                'leave_request_id' => $leave->leave_request_id,
+                'employee_id' => $leave->employee_id,
+                'before_status' => $beforeStatus,
+                'after_status' => $afterStatus,
+            ],
             $leave->employee_id,
             AuditLogService::SEVERITY_INFO,
             'Leave',

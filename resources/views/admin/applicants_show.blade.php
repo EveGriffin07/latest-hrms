@@ -193,23 +193,32 @@
                         @endif
                     </div>
 
-                    {{-- QUICK ACTIONS --}}
+{{-- QUICK ACTIONS --}}
                     <div style="margin-top: 30px; text-align: left;">
                         <span class="info-label" style="margin-bottom: 10px;">Change Application Status</span>
                         
-                        {{-- MODIFIED: Triggers the Interview Modal --}}
+                        {{-- Triggers the Interview Modal --}}
                         <button type="button" class="btn-action btn-interview" onclick="document.getElementById('interviewModal').style.display='flex'">
                             <i class="fa-solid fa-comments"></i> Schedule Interview
                         </button>
 
+                        {{-- HIRE BUTTON: Locked until Evaluation is saved --}}
                         <form action="{{ route('admin.applicants.updateStatus', $application->application_id) }}" method="POST">
                             @csrf <input type="hidden" name="status" value="Hired">
-                            <button class="btn-action btn-hire"><i class="fa-solid fa-check"></i> Hire Candidate</button>
+                            
+                            @if(is_null($application->overall_score))
+                                <button type="button" class="btn-action" style="background: #cbd5e1; color: #475569; cursor: not-allowed;" onclick="alert('You must fill out and save the HR Interview Evaluation below before passing this candidate.')">
+                                    <i class="fa-solid fa-lock"></i> Candidate Passed
+                                </button>
+                            @else
+                                <button type="submit" class="btn-action btn-hire"><i class="fa-solid fa-check"></i> Candidate Passed</button>
+                            @endif
                         </form>
 
+                        {{-- REJECT BUTTON --}}
                         <form action="{{ route('admin.applicants.updateStatus', $application->application_id) }}" method="POST">
                             @csrf <input type="hidden" name="status" value="Rejected">
-                            <button class="btn-action btn-reject" onclick="return confirm('Reject this applicant?')"><i class="fa-solid fa-xmark"></i> Reject</button>
+                            <button type="submit" class="btn-action btn-reject" onclick="return confirm('Reject this applicant?')"><i class="fa-solid fa-xmark"></i> Reject</button>
                         </form>
                     </div>
 

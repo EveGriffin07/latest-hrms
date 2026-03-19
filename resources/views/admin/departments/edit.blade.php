@@ -75,6 +75,7 @@
                 <option value="{{ $u->user_id }}" {{ old('manager_id', $department->manager_id) == $u->user_id ? 'selected' : '' }}>{{ $u->name }} ({{ $u->email }})</option>
               @endforeach
             </select>
+            <small id="manager-auto-tick-note" style="color:#64748b; display:block; margin-top:6px;">Selecting a supervisor auto-ticks employees assigned to that supervisor.</small>
             @error('manager_id') <span class="error">{{ $message }}</span> @enderror
           </div>
           <div>
@@ -143,6 +144,8 @@
   </div>
   <script>
     (function() {
+      var managerToSubordinateIds = @json($managerToSubordinateIds ?? []);
+      var managerSelect = document.getElementById('manager_id');
       var filterEl = document.getElementById('employee-filter');
       var listEl = document.getElementById('employee-list');
       if (!listEl) return;
@@ -194,6 +197,29 @@
           var allChecked = cbs.length > 0 && cbs.every(function(cb) { return cb.checked; });
           cbs.forEach(function(cb) { cb.checked = !allChecked; });
         });
+      }
+
+      var autoTickForManager = function(managerUserId) {
+        if (!table || !managerUserId) return;
+        var targetIds = managerToSubordinateIds[String(managerUserId)] || [];
+        if (!targetIds.length) return;
+
+        var targetSet = new Set(targetIds.map(function(id) { return String(id); }));
+        var rows = table.querySelectorAll('tbody tr');
+        rows.forEach(function(row) {
+          var cb = row.querySelector('input[type="checkbox"]');
+          if (!cb) return;
+          if (targetSet.has(String(cb.value))) {
+            cb.checked = true;
+          }
+        });
+      };
+
+      if (managerSelect) {
+        managerSelect.addEventListener('change', function() {
+          autoTickForManager(this.value);
+        });
+        autoTickForManager(managerSelect.value);
       }
     })();
   </script>

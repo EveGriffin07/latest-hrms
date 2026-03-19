@@ -60,6 +60,53 @@
     .service-b { background:#fef3c7; color:#b45309; }
     .service-c { background:#ecfdf3; color:#15803d; }
     .service-inactive { background:#e2e8f0; color:#475569; }
+
+    /* Applicants actions UI */
+    #tab-applicants td:last-child { text-align: right; }
+    #tab-applicants .applicant-actions { display:flex; gap:10px; justify-content:flex-end; align-items:center; }
+    #tab-applicants .applicant-action-btn {
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:12px;
+      font-size:12px;
+      font-weight:700;
+      line-height:1;
+      border:1px solid #dbeafe;
+      text-decoration:none;
+      white-space:nowrap;
+    }
+    #tab-applicants .applicant-action-btn.view {
+      background:#fff;
+      color:#2563eb;
+      border-color:#bfdbfe;
+    }
+    #tab-applicants .applicant-action-btn.add {
+      background:#2563eb;
+      color:#fff;
+      border-color:#2563eb;
+      box-shadow: 0 6px 16px rgba(37,99,235,0.18);
+    }
+    #tab-applicants .applicant-action-btn.add:disabled {
+      background:#94a3b8;
+      border-color:#94a3b8;
+      box-shadow:none;
+      cursor:not-allowed;
+      opacity:0.7;
+    }
+
+    /* Employee inline status update (edit-mode) */
+    .employee-status-select {
+      display:none;
+      padding:8px 10px;
+      border:1px solid #d1d5db;
+      border-radius:10px;
+      font-size:12px;
+      background:#fff;
+    }
+    /* Enabled only when HR clicks “Edit Status” */
+    .employee-edit-mode .employee-status-select { display:inline-block; }
   </style>
 </head>
 
@@ -89,7 +136,7 @@
         <div class="card"><h4>Departments</h4><p>{{ $departmentsCount }}</p></div>
         <div class="card"><h4>On Leave Today</h4><p>{{ $onLeave }}</p></div>
         <div class="card"><h4>Total Applicants</h4><p>{{ $totalApplicants }}</p></div>
-        <div class="card"><h4>Approved Applicants</h4><p>{{ $approvedApplicants }}</p></div>
+        <div class="card"><h4>Converted Applicants</h4><p>{{ $approvedApplicants }}</p></div>
       </div>
 
       @if (session('success'))
@@ -137,10 +184,33 @@
 
         <div class="tab-panels">
           <div class="panel tab-panel {{ $activeTab === 'employees' ? 'active' : '' }}" id="tab-employees">
-            <h3>
-              Employees
-              <span class="table-meta">Click a row to open profile</span>
+            <h3 style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <span style="font-size:inherit; font-weight:700;">Employees</span>
+                <span class="table-meta">Click a row to open profile</span>
+              </div>
+              <button type="button" id="employeeEditModeBtn" class="btn-ghost" style="padding:8px 12px; white-space:nowrap;">
+                Edit Status
+              </button>
+              <button
+                type="button"
+                id="employeeSaveStatusBtn"
+                class="btn-primary"
+                style="padding:8px 12px; white-space:nowrap; display:none;"
+              >
+                Save
+              </button>
             </h3>
+            {{-- Bulk form used by “Save” button in edit mode --}}
+            <form
+              id="employeeStatusBulkForm"
+              method="POST"
+              action="{{ route('admin.employee.status.bulk_update') }}"
+              style="display:none;"
+            >
+              @csrf
+              <div id="employeeStatusBulkInputs"></div>
+            </form>
             <table>
               <thead>
                 <tr>
@@ -151,6 +221,7 @@
                   <th>Service</th>
                   <th>Email</th>
                   <th>Hire Date</th>
+                  <th style="width:220px;">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -212,10 +283,23 @@
                     </td>
                     <td>{{ optional($employee->user)->email ?? 'N/A' }}</td>
                     <td>{{ \Carbon\Carbon::parse($employee->hire_date)->format('M d, Y') }}</td>
+                    <td>
+                      <select
+                        name="employee_status"
+                        class="employee-status-select row-action"
+                        disabled
+                        data-employee-id="{{ $employee->employee_id }}"
+                        data-original-status="{{ $employee->employee_status }}"
+                      >
+                          <option value="active" {{ $employee->employee_status === 'active' ? 'selected' : '' }}>Active</option>
+                          <option value="inactive" {{ $employee->employee_status === 'inactive' ? 'selected' : '' }}>Inactive</option>
+                          <option value="terminated" {{ $employee->employee_status === 'terminated' ? 'selected' : '' }}>Terminated</option>
+                      </select>
+                    </td>
                   </tr>
                 @empty
                   <tr>
-                    <td colspan="7" style="text-align:center; padding:20px; color:#94a3b8;">No employees found for the selected filters.</td>
+                    <td colspan="8" style="text-align:center; padding:20px; color:#94a3b8;">No employees found for the selected filters.</td>
                   </tr>
                 @endforelse
               </tbody>
@@ -312,34 +396,44 @@
                     <td>{{ optional($applicant->user)->email ?? ($applicant->email ?? 'N/A') }}</td>
                     <td>{{ optional($lastUpdated)->format('M d, Y') ?? '—' }}</td>
                     <td>
-                      @if($applicant->latestApplication)
-                        @php
-                          $eval = $applicant->latestApplication;
-                          $hasEvaluation = !is_null($eval->overall_score) || (!is_null($eval->test_score) && !is_null($eval->interview_score));
-                        @endphp
-                        @if($hasEvaluation)
-                          <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
-                            <div class="muted" style="font-size:11px;">
-                              Eval: 
-                              <strong>{{ $eval->overall_score ?? '-' }}</strong>
-                              @if(!is_null($eval->test_score) || !is_null($eval->interview_score))
-                                <span style="color:#9ca3af;">(Test {{ $eval->test_score ?? '-' }}, Interview {{ $eval->interview_score ?? '-' }})</span>
-                              @endif
-                            </div>
-                            <form method="POST" action="{{ route('admin.applicants.updateStatus', $eval->application_id) }}" style="display:inline;">
-                              @csrf
-                              <input type="hidden" name="status" value="Approved">
-                              <input type="hidden" name="redirect_to_add" value="1">
-                              <button type="submit" class="btn-primary row-action" style="padding:6px 10px; font-size:12px;">Approve</button>
-                            </form>
-                          </div>
-                        @else
-                          <a href="{{ route('admin.applicants.show', $applicant->latestApplication->application_id) }}" class="btn-secondary row-action" style="padding:6px 10px; font-size:12px;">Evaluate</a>
-                        @endif
-                      @else
-                        <span class="muted">No application</span>
-                      @endif
-                    </td>
+  @php
+    $isConverted = strtolower((string) ($applicant->status ?? '')) === 'converted';
+    $eval = $applicant->latestApplication; // This might be null!
+    
+    // SAFE CHECK: Ensure $eval is not null before checking scores
+    $hasEvaluation = $eval && (!is_null($eval->overall_score) || (!is_null($eval->test_score) && !is_null($eval->interview_score)));
+    
+    $applicationId = $eval ? $eval->application_id : null;
+    $hasAppliedJob = $eval && !is_null($eval->job);
+  @endphp
+
+  @if($eval && $hasEvaluation)
+      <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-start;">
+        <div class="muted" style="font-size:11px;">
+          Eval: 
+          <strong>{{ $eval->overall_score ?? '-' }}</strong>
+          @if(!is_null($eval->test_score) || !is_null($eval->interview_score))
+            <span style="color:#9ca3af;">(Test {{ $eval->test_score ?? '-' }}, Interview {{ $eval->interview_score ?? '-' }})</span>
+          @endif
+        </div>
+  @endif
+
+  @if($hasAppliedJob)
+    <div class="applicant-actions">
+      @if($isConverted)
+        <button type="button" class="applicant-action-btn add row-action" disabled>
+          <i class="fa-solid fa-user-plus"></i> Add as Employee
+        </button>
+      @else
+        <a href="{{ route('admin.employee.add', ['applicant_id' => $applicant->applicant_id]) }}" class="applicant-action-btn add row-action">
+          <i class="fa-solid fa-user-plus"></i> Add as Employee
+        </a>
+      @endif
+    </div>
+  @else
+    <span class="muted">No active application</span>
+  @endif
+</td>
                   </tr>
                 @empty
                   <tr>
@@ -668,6 +762,64 @@
     document.querySelectorAll('.row-action').forEach(btn => {
       ['click','mousedown','mouseup'].forEach(ev => btn.addEventListener(ev, e => e.stopPropagation()));
     });
+
+    // Employee status edit mode (dropdown appears + save applies changes)
+    const employeesPanel = document.getElementById('tab-employees');
+    const editModeBtn = document.getElementById('employeeEditModeBtn');
+    const saveStatusBtn = document.getElementById('employeeSaveStatusBtn');
+    const statusSelects = document.querySelectorAll('.employee-status-select');
+
+    let editMode = false;
+    const setEditMode = (on) => {
+      editMode = !!on;
+      if (employeesPanel) employeesPanel.classList.toggle('employee-edit-mode', editMode);
+      if (editModeBtn) editModeBtn.textContent = editMode ? 'Cancel' : 'Edit Status';
+      if (saveStatusBtn) saveStatusBtn.style.display = editMode ? 'inline-flex' : 'none';
+      statusSelects.forEach(sel => {
+        sel.disabled = !editMode;
+        if (!editMode) {
+          const original = sel.dataset.originalStatus;
+          if (original) sel.value = original;
+        }
+      });
+    };
+
+    if (editModeBtn && statusSelects.length > 0) {
+      editModeBtn.addEventListener('click', () => setEditMode(!editMode));
+    }
+
+    if (saveStatusBtn) {
+      saveStatusBtn.addEventListener('click', () => {
+        const payload = {};
+        statusSelects.forEach(sel => {
+          const empId = sel.dataset.employeeId;
+          const original = sel.dataset.originalStatus;
+          const current = sel.value;
+          if (!empId || !current) return;
+          if (original && current !== original) payload[empId] = current;
+        });
+
+        if (Object.keys(payload).length === 0) {
+          setEditMode(false);
+          return;
+        }
+
+        const bulkForm = document.getElementById('employeeStatusBulkForm');
+        const inputs = document.getElementById('employeeStatusBulkInputs');
+        if (!bulkForm || !inputs) return;
+
+        inputs.innerHTML = '';
+        Object.entries(payload).forEach(([empId, status]) => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = `statuses[${empId}]`;
+          input.value = status;
+          inputs.appendChild(input);
+        });
+
+        bulkForm.submit();
+      });
+    }
 
     // Tabs: Employees / Applicants
     const tabs = document.querySelectorAll('.tab-link');

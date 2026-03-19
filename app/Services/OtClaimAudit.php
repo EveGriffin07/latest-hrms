@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\AuditLog;
 use App\Models\OvertimeClaim;
 use Illuminate\Support\Facades\Auth;
+use App\Services\AuditLogService;
 
 class OtClaimAudit
 {
@@ -33,6 +34,22 @@ class OtClaimAudit
         ?string $message = null
     ): void {
         $user = Auth::user();
+
+        // SUCCESS/FAILED is used by the audit drawer filters.
+        // Approvals and intermediate transitions are SUCCESS; rejected/cancelled are FAILED.
+        $actionStatus = in_array($actionType, [
+            self::ACTION_SUPERVISOR_REJECTED,
+            self::ACTION_ADMIN_REJECTED,
+            self::ACTION_CANCELLED,
+        ], true) ? AuditLogService::STATUS_FAILED : AuditLogService::STATUS_SUCCESS;
+
+        $before = $beforeStatus ?? $claim->getRawOriginal('status');
+        $after = $afterStatus ?? $claim->status;
+
+        // Ensure drawer shows "from -> to" directly without relying only on metadata.
+        $message = $message ?? $actionType;
+        $messageWithTransition = $message . ' (' . $before . ' -> ' . $after . ')';
+
         AuditLog::create([
             'employee_id' => $claim->employee_id,
             'actor_type' => self::actorType(),
@@ -42,15 +59,15 @@ class OtClaimAudit
             'entity_type' => self::ENTITY_TYPE,
             'entity_id' => (string) $claim->id,
             'action_type' => $actionType,
-            'action_status' => 'SUCCESS',
+            'action_status' => $actionStatus,
             'log_type' => 'Web',
             'severity' => 'INFO',
-            'message' => $message ?? $actionType,
+            'message' => $messageWithTransition,
             'metadata' => array_merge([
                 'claim_id' => $claim->id,
                 'employee_id' => $claim->employee_id,
-                'before_status' => $beforeStatus ?? $claim->getRawOriginal('status'),
-                'after_status' => $afterStatus ?? $claim->status,
+                'before_status' => $before,
+                'after_status' => $after,
                 'timestamp' => now()->toIso8601String(),
             ], $metadata),
         ]);

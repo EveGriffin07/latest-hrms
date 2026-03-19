@@ -130,35 +130,60 @@
             <a href="{{ route('admin.onboarding') }}" style="background: #fff; color: #475569; border: 1px solid #cbd5e1; padding: 12px 24px; border-radius: 8px; font-weight: 600; text-decoration: none; display: inline-block; margin-right: 10px;">Cancel</a>
             <button type="submit" style="background: #2563eb; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-weight: 600; cursor: pointer; box-shadow: 0 4px 6px rgba(37,99,235,0.2);"><i class="fa-solid fa-bolt"></i> Generate Setup & Tasks</button>
         </div>
+
+        @if ($errors->any())
+    <div style="background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; padding: 15px; border-radius: 8px; margin-bottom: 25px;">
+        <ul style="margin: 0; padding-left: 20px;">
+            @foreach ($errors->all() as $error)
+                <li style="font-size: 14px;">{{ $error }}</li>
+            @endforeach
+        </ul>
+    </div>
+@endif
     </form>
   </main>
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        // Initialize Search for Employee
-        new TomSelect('#employeeSelect', {
-            create: false,
-            sortField: { field: "text", direction: "asc" },
-            onChange: function(value) { updateMeta(value); }
-        });
-        
-        // Initialize Search for Supervisor
-        new TomSelect('#supervisorSelect', {
-            create: false,
-            sortField: { field: "text", direction: "asc" }
-        });
+    document.querySelector('form').addEventListener('submit', function(e) {
+        const startDate = new Date(document.querySelector('input[name="startDate"]').value);
+        const deadline = new Date(document.querySelector('input[name="deadline"]').value);
+        const employeeId = document.querySelector('#employeeSelect').value;
+        const supervisorId = document.querySelector('#supervisorSelect').value;
+
+        let errors = [];
+
+        // 1. Logic Check: Dates
+        if (deadline < startDate) {
+            errors.push("The onboarding deadline cannot be earlier than the start date.");
+        }
+
+        // 2. Logic Check: Hierarchy
+        if (employeeId === supervisorId && employeeId !== "") {
+            errors.push("An employee cannot be assigned as their own supervisor.");
+        }
+
+        if (errors.length > 0) {
+            e.preventDefault();
+            alert("Please fix the following errors:\n- " + errors.join("\n- "));
+        }
     });
 
-    function updateMeta(employeeId) {
-        if(!employeeId) { document.getElementById('metaBox').style.display = 'none'; return; }
-        const option = document.getElementById('employeeSelect').querySelector(`option[value="${employeeId}"]`);
-        if(option) {
-            document.getElementById('metaBox').style.display = 'flex';
-            document.getElementById('metaDept').innerText = option.getAttribute('data-dept');
-            document.getElementById('metaPos').innerText = option.getAttribute('data-pos');
-        }
-    }
+    // Dynamic Date Restriction: Deadline cannot be before Start Date
+    const startInput = document.querySelector('input[name="startDate"]');
+    const deadlineInput = document.querySelector('input[name="deadline"]');
+
+    startInput.addEventListener('change', function() {
+        deadlineInput.min = this.value;
+    });
+
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        // Set the minimum selectable date to today
+        const today = new Date().toISOString().split('T')[0];
+        document.getElementById('startDateInput').setAttribute('min', today);
+    });
+
 </script>
 </body>
 </html>

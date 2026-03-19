@@ -34,7 +34,7 @@
       <div class="card"><h4>Departments</h4><p>{{ $departmentsCount ?? 0 }}</p></div>
       <div class="card"><h4>On Leave Today</h4><p>{{ $onLeave ?? 0 }}</p></div>
       <div class="card"><h4>Total Applicants</h4><p>{{ $totalApplicants ?? 0 }}</p></div>
-      <div class="card"><h4>Approved Applicants</h4><p>{{ $approvedApplicants ?? 0 }}</p></div>
+      <div class="card"><h4>Converted Applicants</h4><p>{{ $approvedApplicants ?? 0 }}</p></div>
     </div>
 
     <form class="filter-bar" method="GET" action="{{ route('admin.employee.list') }}" style="margin-bottom:20px;">
@@ -93,11 +93,35 @@
               @php
                   // Extract the department ID from the job the applicant applied for
                   $appDeptId = '';
+                  $appJobTitle = '';
+                  $appPositionId = '';
+                  $appAddressParts = array_filter([
+                      trim((string) ($app->address_line_1 ?? '')),
+                      trim((string) ($app->address_line_2 ?? '')),
+                      trim((string) ($app->city ?? '')),
+                      trim((string) ($app->state ?? '')),
+                      trim((string) ($app->postcode ?? '')),
+                  ], fn ($v) => $v !== '');
+                  $appAddress = !empty($appAddressParts)
+                      ? implode(', ', $appAddressParts)
+                      : (trim((string) ($app->location ?? '')) ?: '');
                   if ($app->latestApplication && $app->latestApplication->job) {
                       $jobDeptName = $app->latestApplication->job->department;
+                      $appJobTitle = $app->latestApplication->job->job_title ?? '';
                       $matchingDept = $departments->where('department_name', $jobDeptName)->first();
                       if ($matchingDept) {
                           $appDeptId = $matchingDept->department_id;
+                      }
+
+                      // Best-effort mapping from applied job title to an existing employee position.
+                      if ($appJobTitle) {
+                        $appPosition = $positions->first(function ($pos) use ($appJobTitle) {
+                          $posName = strtolower(trim((string) ($pos->position_name ?? '')));
+                          $jobName = strtolower(trim((string) $appJobTitle));
+                          if ($posName === $jobName) return true;
+                          return str_contains($posName, $jobName) || str_contains($jobName, $posName);
+                        });
+                        $appPositionId = $appPosition?->position_id ?? '';
                       }
                   }
               @endphp
@@ -106,8 +130,10 @@
                 data-name="{{ $app->full_name }}"
                 data-email="{{ $app->email }}"
                 data-phone="{{ $app->phone }}"
-                data-address="{{ $app->location }}"
-                data-dept="{{ $appDeptId }}">
+                data-address="{{ $appAddress }}"
+                data-dept="{{ $appDeptId }}"
+                data-jobtitle="{{ $appJobTitle }}"
+                data-positionid="{{ $appPositionId }}">
                 {{ $app->full_name }} ({{ $app->email }}) {{ $app->phone ? '· '.$app->phone : '' }}
               </option>
             @endforeach
@@ -117,6 +143,11 @@
           @else
             <small style="color:#94a3b8;">Select any applicant to auto-fill fields; or choose “Manual entry” to type everything yourself.</small>
           @endif
+        </div>
+
+        <div class="form-group" style="margin-top: -6px;">
+          <label style="font-size:13px; color:#64748b; font-weight:600;">Applied Job</label>
+          <div id="appliedJobTitle" style="font-size:14px; color:#0f172a; font-weight:600;">—</div>
         </div>
 
         <div class="form-group">
@@ -144,6 +175,7 @@
               </option>
             @endforeach
           </select>
+          <small id="departmentAutoNote" style="color:#94a3b8; display:block; margin-top:5px;">If a supervisor is selected, department will follow the supervisor's department automatically.</small>
         </div>
 
         <div class="form-group">
@@ -177,7 +209,7 @@
         <div class="form-row">
           <div class="form-group half">
             <label for="joinDate">Join Date <span>*</span></label>
-            <input type="date" id="joinDate" name="hire_date" value="{{ old('hire_date') }}" required>
+            <input type="date" id="joinDate" name="hire_date" value="{{ old('hire_date') }}" min="{{ now()->toDateString() }}" required>
           </div>
           <div class="form-group half">
             <label for="status">Employment Status</label>
@@ -191,7 +223,7 @@
 
         <div class="form-group">
           <label for="baseSalary">Base Salary <span>*</span></label>
-          <input type="number" step="0.01" min="0" id="baseSalary" name="base_salary" value="{{ old('base_salary', '0') }}" placeholder="e.g., 5000.00" required>
+          <input type="number" step="100" min="0" id="baseSalary" name="base_salary" value="{{ old('base_salary', '0') }}" placeholder="e.g., 5000" required>
         </div>
 
         <div class="form-group">
@@ -308,7 +340,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const phoneInput = document.getElementById('phone');
   const addressInput = document.getElementById('address');
   const departmentSelect = document.getElementById('department');
+  const designationSelect = document.getElementById('designation');
   const supervisorSelect = document.getElementById('supervisor');
+  const departmentAutoNote = document.getElementById('departmentAutoNote');
+  const employeeForm = document.querySelector('form.form-card');
 
   const updateSupervisors = () => {
       const selectedDeptId = departmentSelect.value;
@@ -338,6 +373,27 @@ document.addEventListener('DOMContentLoaded', () => {
       }
   };
 
+  const syncDepartmentWithSupervisor = () => {
+      const selectedOpt = supervisorSelect?.selectedOptions?.[0];
+      const supervisorDeptId = selectedOpt?.dataset?.dept || '';
+
+      if (supervisorDeptId) {
+          departmentSelect.value = supervisorDeptId;
+          departmentSelect.setAttribute('disabled', 'disabled');
+          if (departmentAutoNote) {
+            departmentAutoNote.textContent = "Department is auto-set from the selected supervisor.";
+          }
+          updateSupervisors();
+          return;
+      }
+
+      departmentSelect.removeAttribute('disabled');
+      if (departmentAutoNote) {
+        departmentAutoNote.textContent = "If a supervisor is selected, department will follow the supervisor's department automatically.";
+      }
+      updateSupervisors();
+  };
+
   const fillFromApplicant = () => {
     const option = applicantSelect?.selectedOptions[0];
     if (!option || !option.dataset.name) return;
@@ -346,19 +402,40 @@ document.addEventListener('DOMContentLoaded', () => {
     emailInput.value = option.dataset.email || '';
     phoneInput.value = option.dataset.phone || '';
     addressInput.value = option.dataset.address || '';
+
+    const appliedJobEl = document.getElementById('appliedJobTitle');
+    if (appliedJobEl) {
+      appliedJobEl.textContent = option.dataset.jobtitle || '—';
+    }
+
+    if (option.dataset.positionid) {
+      designationSelect.value = option.dataset.positionid;
+    }
     
     // Auto-fill Department & trigger the Smart Supervisor Sort
     if (option.dataset.dept) {
         departmentSelect.value = option.dataset.dept;
         updateSupervisors(); 
     }
+
+    // If applicant import set/kept a supervisor, enforce supervisor-department sync too.
+    syncDepartmentWithSupervisor();
   };
 
   applicantSelect?.addEventListener('change', fillFromApplicant);
   departmentSelect?.addEventListener('change', updateSupervisors); // Trigger if HR changes dept manually
+  supervisorSelect?.addEventListener('change', syncDepartmentWithSupervisor);
+  employeeForm?.addEventListener('submit', () => {
+    // Disabled fields are excluded from POST payload.
+    // Re-enable right before submit so department_id is always sent.
+    if (departmentSelect?.disabled) {
+      departmentSelect.removeAttribute('disabled');
+    }
+  });
   
   // Initialize on load
   fillFromApplicant();
+  syncDepartmentWithSupervisor();
 });
 </script>
 </body>

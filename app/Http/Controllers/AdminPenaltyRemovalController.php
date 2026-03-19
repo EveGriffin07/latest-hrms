@@ -16,9 +16,11 @@ class AdminPenaltyRemovalController extends Controller
      */
     public function index(Request $request)
     {
+        $legacyPendingAdmin = 'submitted_to_admin';
         $request->validate([
             'status' => ['nullable', 'string', 'in:' . implode(',', [
-                PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN,
+                PenaltyRemovalRequest::STATUS_PENDING_ADMIN,
+                $legacyPendingAdmin,
                 PenaltyRemovalRequest::STATUS_APPROVED_ADMIN,
                 PenaltyRemovalRequest::STATUS_REJECTED_ADMIN,
             ])],
@@ -29,7 +31,10 @@ class AdminPenaltyRemovalController extends Controller
             'end' => ['nullable', 'date', 'after_or_equal:start'],
         ]);
 
-        $status = $request->input('status', PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN);
+        $status = $request->input('status', PenaltyRemovalRequest::STATUS_PENDING_ADMIN);
+        if ($status === $legacyPendingAdmin) {
+            $status = PenaltyRemovalRequest::STATUS_PENDING_ADMIN;
+        }
 
         $departments = Department::orderBy('department_name')->get();
 
@@ -40,13 +45,19 @@ class AdminPenaltyRemovalController extends Controller
             'supervisor',
             'admin',
         ])->whereIn('status', [
-            PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN,
+            PenaltyRemovalRequest::STATUS_PENDING_ADMIN,
+            $legacyPendingAdmin,
             PenaltyRemovalRequest::STATUS_APPROVED_ADMIN,
             PenaltyRemovalRequest::STATUS_REJECTED_ADMIN,
         ]);
 
         if ($status) {
-            $query->where('status', $status);
+            // Treat "Pending" filter as including legacy submitted_to_admin.
+            if ($status === PenaltyRemovalRequest::STATUS_PENDING_ADMIN) {
+                $query->whereIn('status', [PenaltyRemovalRequest::STATUS_PENDING_ADMIN, $legacyPendingAdmin]);
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         if ($request->filled('q')) {
@@ -90,7 +101,7 @@ class AdminPenaltyRemovalController extends Controller
         $requests = $query->paginate(25)->withQueryString();
 
         $counts = [
-            'pending' => PenaltyRemovalRequest::where('status', PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN)->count(),
+            'pending' => PenaltyRemovalRequest::whereIn('status', [PenaltyRemovalRequest::STATUS_PENDING_ADMIN, $legacyPendingAdmin])->count(),
             'approved' => PenaltyRemovalRequest::where('status', PenaltyRemovalRequest::STATUS_APPROVED_ADMIN)->count(),
             'rejected' => PenaltyRemovalRequest::where('status', PenaltyRemovalRequest::STATUS_REJECTED_ADMIN)->count(),
         ];
@@ -100,8 +111,14 @@ class AdminPenaltyRemovalController extends Controller
 
     public function approve(Request $request, PenaltyRemovalRequest $removal)
     {
-        if ($removal->status !== PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN) {
+        if (! in_array($removal->status, [PenaltyRemovalRequest::STATUS_PENDING_ADMIN, 'submitted_to_admin'], true)) {
             return back()->with('error', 'Only submitted requests can be approved.');
+        }
+
+        // Normalize legacy status if needed.
+        if ($removal->status === 'submitted_to_admin') {
+            $removal->status = PenaltyRemovalRequest::STATUS_PENDING_ADMIN;
+            $removal->save();
         }
 
         $removal->update([
@@ -141,8 +158,14 @@ class AdminPenaltyRemovalController extends Controller
             'admin_note' => ['required', 'string', 'max:500'],
         ]);
 
-        if ($removal->status !== PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN) {
+        if (! in_array($removal->status, [PenaltyRemovalRequest::STATUS_PENDING_ADMIN, 'submitted_to_admin'], true)) {
             return back()->with('error', 'Only submitted requests can be rejected.');
+        }
+
+        // Normalize legacy status if needed.
+        if ($removal->status === 'submitted_to_admin') {
+            $removal->status = PenaltyRemovalRequest::STATUS_PENDING_ADMIN;
+            $removal->save();
         }
 
         $removal->update([
@@ -175,4 +198,3 @@ class AdminPenaltyRemovalController extends Controller
         return back()->with('success', 'Request rejected.');
     }
 }
-

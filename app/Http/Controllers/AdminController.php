@@ -23,6 +23,7 @@ use App\Models\Penalty;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage; // Needed for file deletion
+use App\Services\AttendanceEvaluationService;
 
 class AdminController extends Controller
 {
@@ -103,6 +104,39 @@ class AdminController extends Controller
         ));
     }
 
+    /**
+     * Central Reports & Analytics data (AJAX) for the selected month.
+     * Returns JSON for dashboard widgets/charts without full page reload.
+     */
+    public function centralReportsData(Request $request)
+    {
+        $selectedMonth = $request->query('month'); // YYYY-MM
+
+        $periodEnd = Carbon::today();
+        $periodStart = $periodEnd->copy()->subDays(29);
+
+        if (is_string($selectedMonth) && preg_match('/^\\d{4}-\\d{2}$/', $selectedMonth)) {
+            $mStart = Carbon::createFromFormat('Y-m', $selectedMonth)->startOfMonth();
+            $mEnd = $mStart->copy()->endOfMonth();
+            $periodStart = $mStart;
+            $periodEnd = $mEnd->greaterThan(Carbon::today()) ? Carbon::today() : $mEnd;
+        }
+
+        $reportAttendance = $this->buildAttendanceReportAll($periodStart, $periodEnd);
+        $reportOvertime = $this->buildOvertimeReportAll($periodStart, $periodEnd);
+        $reportLeave = $this->buildLeaveReportAll($periodStart, $periodEnd);
+        $reportPredictive = $this->buildPredictiveReport($reportAttendance, $reportOvertime, $reportLeave);
+
+        return response()->json([
+            'period_start' => $periodStart->format('Y-m-d'),
+            'period_end' => $periodEnd->format('Y-m-d'),
+            'reportAttendance' => $reportAttendance,
+            'reportOvertime' => $reportOvertime,
+            'reportLeave' => $reportLeave,
+            'reportPredictive' => $reportPredictive,
+        ]);
+    }
+
     /** Default hourly rate (RM) for OT cost display when not from payroll. */
     private const OT_HOURLY_RATE = 90;
 
@@ -122,25 +156,80 @@ class AdminController extends Controller
         $end = $end ?: Carbon::today();
         $start = $start ?: $end->copy()->subDays(29);
 
+        // Load employees for working-day evaluation rules.
+        $employees = Employee::whereIn('employee_id', $employeeIds)->get();
+        $employeeCount = max(1, $employees->count());
+
+        // Attendance records keyed by employee+date (for in/out times).
         $records = Attendance::whereIn('employee_id', $employeeIds)
             ->whereBetween('date', [$start->format('Y-m-d'), $end->format('Y-m-d')])
+            ->get()
+            ->keyBy(function ($a) {
+                return $a->employee_id . '_' . Carbon::parse($a->date)->format('Y-m-d');
+            });
+
+        // Approved leave overlay for the selected date range.
+        $leaves = LeaveRequest::where('leave_status', 'approved')
+            ->whereIn('employee_id', $employeeIds)
+            ->where(function ($q) use ($start, $end) {
+                $q->where('start_date', '<=', $end->format('Y-m-d'))
+                    ->where('end_date', '>=', $start->format('Y-m-d'));
+            })
             ->get();
 
+        $leaveSet = [];
+        foreach ($leaves as $l) {
+            $s = Carbon::parse($l->start_date)->startOfDay();
+            $e = Carbon::parse($l->end_date)->startOfDay();
+            for ($d = $s->copy(); $d->lte($e) && $d->lte($end); $d->addDay()) {
+                if ($d->gte($start)) {
+                    $leaveSet[$l->employee_id][$d->format('Y-m-d')] = true;
+                }
+            }
+        }
+
+        $service = app(AttendanceEvaluationService::class);
+
         $totalDays = $start->diffInDays($end) + 1;
-        $presentCount = $records->where('at_status', 'present')->count();
-        // For dashboard risk counts, use penalties (system-generated) as the source of truth.
-        $lateCount = Penalty::whereIn('employee_id', $employeeIds)
-            ->where('penalty_type', 'late')
-            ->whereBetween('assigned_at', [$start->format('Y-m-d'), $end->format('Y-m-d')])
-            ->count();
-        $absentCount = Penalty::whereIn('employee_id', $employeeIds)
-            ->where('penalty_type', 'absent')
-            ->whereBetween('assigned_at', [$start->format('Y-m-d'), $end->format('Y-m-d')])
-            ->count();
-        $leaveCount = $records->where('at_status', 'leave')->count();
-        $expectedRecords = $totalDays * max(1, count($employeeIds));
-        $attendanceRate = $expectedRecords > 0
-            ? (int) round(($presentCount + $lateCount) / $expectedRecords * 100)
+        $workingDaySlots = 0;
+        $presentCount = 0;
+        $lateCount = 0;
+        $absentCount = 0;
+        $leaveCount = 0;
+
+        for ($d = $start->copy()->startOfDay(); $d->lte($end->copy()->startOfDay()); $d->addDay()) {
+            $dateStr = $d->format('Y-m-d');
+            foreach ($employees as $emp) {
+                $eid = $emp->employee_id;
+
+                // Leave supersedes late/absent.
+                if (isset($leaveSet[$eid][$dateStr])) {
+                    $leaveCount++;
+                    continue;
+                }
+
+                $att = $records->get($eid . '_' . $dateStr);
+                $eval = $service->evaluate($emp, $d->copy(), $att);
+
+                if (!($eval['is_working_day'] ?? false)) {
+                    continue;
+                }
+
+                $workingDaySlots++;
+
+                $status = (string) ($eval['primary_status'] ?? '');
+                if ($status === 'present') {
+                    $presentCount++;
+                } elseif ($status === 'late') {
+                    $lateCount++;
+                } elseif ($status === 'absent' || $status === 'pending') {
+                    $absentCount++;
+                }
+            }
+        }
+
+        $attendanceRate = $workingDaySlots > 0
+            ? (int) round(($presentCount + $lateCount) / $workingDaySlots * 100)
             : 0;
 
         // Last 7 days trend (day label + counts per status)
@@ -152,14 +241,40 @@ class AdminController extends Controller
         $dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
         for ($i = 6; $i >= 0; $i--) {
-            $d = Carbon::today()->subDays($i);
+            $d = $end->copy()->startOfDay()->subDays($i);
             $dateStr = $d->format('Y-m-d');
             $trendLabels[] = $dayNames[(int) $d->format('w')];
-            $dayRecords = $records->where('date', $dateStr);
-            $trendPresent[] = $dayRecords->where('at_status', 'present')->count();
-            $trendLate[] = $dayRecords->where('at_status', 'late')->count();
-            $trendAbsent[] = $dayRecords->where('at_status', 'absent')->count();
-            $trendLeave[] = $dayRecords->where('at_status', 'leave')->count();
+
+            $p = 0;
+            $l = 0;
+            $a = 0;
+            $lv = 0;
+
+            foreach ($employees as $emp) {
+                $eid = $emp->employee_id;
+
+                if (isset($leaveSet[$eid][$dateStr])) {
+                    $lv++;
+                    continue;
+                }
+
+                $att = $records->get($eid . '_' . $dateStr);
+                $eval = $service->evaluate($emp, $d->copy(), $att);
+
+                if (!($eval['is_working_day'] ?? false)) {
+                    continue;
+                }
+
+                $status = (string) ($eval['primary_status'] ?? '');
+                if ($status === 'present') $p++;
+                elseif ($status === 'late') $l++;
+                elseif ($status === 'absent' || $status === 'pending') $a++;
+            }
+
+            $trendPresent[] = $p;
+            $trendLate[] = $l;
+            $trendAbsent[] = $a;
+            $trendLeave[] = $lv;
         }
 
         $highlights = [];
@@ -180,7 +295,7 @@ class AdminController extends Controller
             'late_count'      => $lateCount,
             'absent_count'    => $absentCount,
             'leave_count'     => $leaveCount,
-            'employee_count'  => count($employeeIds),
+            'employee_count'  => $employeeCount,
             'trend_labels'    => $trendLabels,
             'trend_present'   => $trendPresent,
             'trend_late'      => $trendLate,
@@ -289,12 +404,26 @@ class AdminController extends Controller
                 $entitlementTotal += $this->entitlementForEmployee($emp, $type, $year);
             }
 
-            $used = (float) LeaveRequest::whereIn('employee_id', $employeeIds)
+            // Filter-based "used" days: count only the overlap between the leave period and the selected [periodStart, periodEnd].
+            $used = 0.0;
+            $leaves = LeaveRequest::whereIn('employee_id', $employeeIds)
                 ->where('leave_type_id', $type->leave_type_id)
                 ->where('leave_status', 'approved')
                 ->whereDate('start_date', '<=', $periodEnd->format('Y-m-d'))
-                ->whereDate('end_date', '>=', $yearStart->format('Y-m-d'))
-                ->sum('total_days');
+                ->whereDate('end_date', '>=', $periodStart->format('Y-m-d'))
+                ->get();
+
+            foreach ($leaves as $leave) {
+                $ls = Carbon::parse($leave->start_date)->startOfDay();
+                $le = Carbon::parse($leave->end_date)->startOfDay();
+
+                $overlapStart = $ls->max($periodStart);
+                $overlapEnd = $le->min($periodEnd);
+
+                if ($overlapStart->lte($overlapEnd)) {
+                    $used += (float) ($overlapStart->diffInDays($overlapEnd) + 1);
+                }
+            }
 
             $remaining = max($entitlementTotal - $used, 0);
             if ($entitlementTotal <= 0 && $used <= 0) {

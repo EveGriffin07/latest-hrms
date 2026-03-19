@@ -92,8 +92,8 @@
       @endif
 
       <section class="summary">
-        <a class="card {{ ($status ?? '') === \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN ? 'active' : '' }}"
-           href="{{ route('admin.attendance.penalty_removal_requests.index', ['status' => \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN]) }}">
+        <a class="card {{ ($status ?? '') === \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN ? 'active' : '' }}"
+           href="{{ route('admin.attendance.penalty_removal_requests.index', ['status' => \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN]) }}">
           <h3>Pending</h3>
           <p>{{ $counts['pending'] ?? 0 }}</p>
         </a>
@@ -134,7 +134,7 @@
             <div class="split">
               <label for="status">Status</label>
               <select id="status" name="status">
-                <option value="{{ \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN }}" {{ request('status', \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN) === \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN ? 'selected' : '' }}>Pending</option>
+                <option value="{{ \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN }}" {{ request('status', \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN) === \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN ? 'selected' : '' }}>Pending</option>
                 <option value="{{ \App\Models\PenaltyRemovalRequest::STATUS_APPROVED_ADMIN }}" {{ request('status') === \App\Models\PenaltyRemovalRequest::STATUS_APPROVED_ADMIN ? 'selected' : '' }}>Approved</option>
                 <option value="{{ \App\Models\PenaltyRemovalRequest::STATUS_REJECTED_ADMIN }}" {{ request('status') === \App\Models\PenaltyRemovalRequest::STATUS_REJECTED_ADMIN ? 'selected' : '' }}>Rejected</option>
               </select>
@@ -149,7 +149,7 @@
             </div>
             <div class="split" style="display:flex; align-items:flex-end; gap:8px; flex:1 1 220px;">
               <button type="submit" class="btn btn-primary"><i class="fa-solid fa-rotate"></i> Filter</button>
-              <a class="btn btn-ghost" href="{{ route('admin.attendance.penalty_removal_requests.index', ['status' => \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN]) }}" style="text-decoration:none; display:inline-flex; align-items:center; gap:8px;">
+              <a class="btn btn-ghost" href="{{ route('admin.attendance.penalty_removal_requests.index', ['status' => \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN]) }}" style="text-decoration:none; display:inline-flex; align-items:center; gap:8px;">
                 Clear
               </a>
             </div>
@@ -164,6 +164,7 @@
               <th>Penalty</th>
               <th>Employee</th>
               <th>Department</th>
+              <th>Supervisor</th>
               <th>Appeal</th>
               <th>Supervisor note</th>
               <th>Attachment</th>
@@ -183,18 +184,19 @@
                 $pid = 'P-' . str_pad((string) $r->penalty_id, 4, '0', STR_PAD_LEFT);
                 $pType = $pen?->penalty_type ? ucfirst(str_replace('_',' ', $pen->penalty_type)) : ($pen?->penalty_name ?? 'Penalty');
                 $statusClass = match($r->status) {
-                  \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN => 'pending',
+                  \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN => 'pending',
                   \App\Models\PenaltyRemovalRequest::STATUS_APPROVED_ADMIN => 'approved',
                   \App\Models\PenaltyRemovalRequest::STATUS_REJECTED_ADMIN => 'rejected',
                   default => 'pending',
                 };
                 $statusLabel = match($r->status) {
-                  \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN => 'Pending',
+                  \App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN => 'Pending admin review',
                   \App\Models\PenaltyRemovalRequest::STATUS_APPROVED_ADMIN => 'Approved',
                   \App\Models\PenaltyRemovalRequest::STATUS_REJECTED_ADMIN => 'Rejected',
+                  'submitted_to_admin' => 'Submitted to admin',
                   default => ucfirst(str_replace('_',' ', (string) $r->status)),
                 };
-                $canAct = $r->status === \App\Models\PenaltyRemovalRequest::STATUS_SUBMITTED_ADMIN;
+                $canAct = in_array($r->status, [\App\Models\PenaltyRemovalRequest::STATUS_PENDING_ADMIN, 'submitted_to_admin'], true);
               @endphp
               <tr>
                 <td>
@@ -206,6 +208,7 @@
                   <span class="muted">{{ $emp?->employee_code ?? ('EMP-'.$r->employee_id) }}</span>
                 </td>
                 <td>{{ $dept?->department_name ?? 'N/A' }}</td>
+                <td>{{ $r->supervisor?->name ?? '—' }}</td>
                 <td>{{ $r->request_reason ?? '—' }}</td>
                 <td>{{ $r->supervisor_note ?? '—' }}</td>
                 <td>
@@ -242,7 +245,7 @@
                 </td>
               </tr>
             @empty
-              <tr><td colspan="8" style="text-align:center; color:#94a3b8; padding:14px;">No penalty removal requests.</td></tr>
+              <tr><td colspan="9" style="text-align:center; color:#94a3b8; padding:14px;">No penalty removal requests.</td></tr>
             @endforelse
           </tbody>
         </table>
@@ -368,4 +371,3 @@
   </script>
 </body>
 </html>
-

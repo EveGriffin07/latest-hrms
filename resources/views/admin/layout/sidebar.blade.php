@@ -97,12 +97,12 @@
         <a href="#" class="sidebar-toggle">
             <div class="left">
                 <i class="fa-solid fa-clipboard-list"></i>
-                <span>Audit Log</span>
+                <span>Audit Trail</span>
             </div>
             <i class="fa-solid fa-chevron-right arrow"></i>
         </a>
         <ul class="submenu">
-            <li><a href="{{ route('admin.audit.log') }}">View Audit Log</a></li>
+            <li><a href="{{ route('admin.audit.log') }}">View Audit Trail</a></li>
         </ul>
     </div>
 

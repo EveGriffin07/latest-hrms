@@ -123,7 +123,8 @@
                 </div>
 
                 <div class="form-group" style="flex: 1;">
-                    <input type="text" name="postcode" value="{{ old('postcode', $profile->postcode ?? '') }}" placeholder="Postcode (e.g. 46000)" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;" form="mainProfileForm">
+                    {{-- MODIFIED: Added numbers-only class to the postcode input --}}
+                    <input type="text" name="postcode" class="numbers-only" value="{{ old('postcode', $profile->postcode ?? '') }}" placeholder="Postcode (e.g. 46000)" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px;" form="mainProfileForm">
                 </div>
             </div>
         </div>
@@ -531,6 +532,13 @@
     document.querySelectorAll('.phone-only').forEach(input => {
         input.addEventListener('input', function() {
             this.value = this.value.replace(/[^0-9\+\-\s]/g, '');
+        });
+    });
+
+    // === ADDED: JS VALIDATION FOR NUMBERS ONLY ===
+    document.querySelectorAll('.numbers-only').forEach(input => {
+        input.addEventListener('input', function() {
+            this.value = this.value.replace(/[^0-9]/g, ''); // Instantly removes letters/symbols
         });
     });
 

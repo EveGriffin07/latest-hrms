@@ -59,15 +59,17 @@ class ApplicationController extends Controller
     {
         $application = Application::findOrFail($id);
 
-        // Just update the status to whatever HR selected
+        // Update the status to whatever HR selected
         $application->app_stage = $request->status;
         $application->save();
 
-        $message = ($request->status === 'Hired')
-            ? 'Candidate marked as Hired! The Employee Management module can now convert them to an official employee.'
-            : 'Applicant status updated successfully!';
+        // If the candidate is hired, redirect to the Employee Management index
+        if ($request->status === 'Hired') {
+            return redirect()->route('admin.employee.list')->with('success', 'Candidate marked as Hired! You have been redirected to Employee Management to finalize their profile.');
+        }
 
-        return redirect()->back()->with('success', $message);
+        // For other statuses (Reviewing, Rejected, etc.), just stay on the current page
+        return redirect()->back()->with('success', 'Applicant status updated successfully!');
     }
 
     // 3.5 Schedule Interview

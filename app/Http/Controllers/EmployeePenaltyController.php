@@ -112,8 +112,10 @@ class EmployeePenaltyController extends Controller
             'request_reason' => $data['request_reason'],
             'employee_note' => $data['employee_note'] ?? null,
             'attachment_path' => $path,
+            // If requester is a supervisor, mark as "submitted_to_admin" (legacy-compatible)
+            // so it's clearly distinguishable from team requests forwarded by supervisor.
             'status' => $autoForwardToAdmin
-                ? PenaltyRemovalRequest::STATUS_PENDING_ADMIN
+                ? ($isSupervisorRequester ? 'submitted_to_admin' : PenaltyRemovalRequest::STATUS_PENDING_ADMIN)
                 : PenaltyRemovalRequest::STATUS_PENDING_SUPERVISOR,
             'submitted_at' => now(),
             'supervisor_reviewed_at' => $autoForwardToAdmin ? now() : null,
@@ -129,7 +131,7 @@ class EmployeePenaltyController extends Controller
 
         return redirect()->route('employee.penalties.index')
             ->with('success', $autoForwardToAdmin
-                ? 'Removal request submitted. Pending admin review.'
+                ? ($isSupervisorRequester ? 'Removal request submitted to admin for review.' : 'Removal request submitted. Pending admin review.')
                 : 'Removal request submitted. Pending supervisor review.');
     }
 
@@ -151,4 +153,3 @@ class EmployeePenaltyController extends Controller
             ->with('success', 'Removal request cancelled.');
     }
 }
-

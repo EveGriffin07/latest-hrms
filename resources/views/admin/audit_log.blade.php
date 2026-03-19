@@ -123,15 +123,6 @@
           </select>
         </div>
         <div class="filter-section">
-          <label>Environment</label>
-          <select id="filter-environment">
-            <option value="">All</option>
-            <option value="Production">Production</option>
-            <option value="Staging">Staging</option>
-            <option value="Demo">Demo</option>
-          </select>
-        </div>
-        <div class="filter-section">
           <label>Date range</label>
           <select id="filter-date-range">
             <option value="last7">Last 7 days</option>
@@ -174,15 +165,14 @@
                 <th>Entity ID</th>
                 <th>Action</th>
                 <th>Type</th>
-                <th>Environment</th>
                 <th>Timestamp</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="table-body">
-              <tr class="skeleton-row"><td colspan="7"><div class="skeleton" style="height:24px"></div></td></tr>
-              <tr class="skeleton-row"><td colspan="7"><div class="skeleton" style="height:24px"></div></td></tr>
-              <tr class="skeleton-row"><td colspan="7"><div class="skeleton" style="height:24px"></div></td></tr>
+              <tr class="skeleton-row"><td colspan="6"><div class="skeleton" style="height:24px"></div></td></tr>
+              <tr class="skeleton-row"><td colspan="6"><div class="skeleton" style="height:24px"></div></td></tr>
+              <tr class="skeleton-row"><td colspan="6"><div class="skeleton" style="height:24px"></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -235,7 +225,6 @@
   const keyword = document.getElementById('keyword');
   const filterAction = document.getElementById('filter-action');
   const filterType = document.getElementById('filter-type');
-  const filterEnvironment = document.getElementById('filter-environment');
   const filterDateRange = document.getElementById('filter-date-range');
   const filterDateFrom = document.getElementById('filter-date-from');
   const filterDateTo = document.getElementById('filter-date-to');
@@ -264,7 +253,6 @@
     if (keyword.value.trim()) p.set('keyword', keyword.value.trim());
     if (filterAction.value) p.set('action', filterAction.value);
     if (filterType.value) p.set('type', filterType.value);
-    if (filterEnvironment.value) p.set('environment', filterEnvironment.value);
     if (filterDateRange.value) p.set('date_range', filterDateRange.value);
     if (filterDateRange.value === 'custom') {
       if (filterDateFrom.value) p.set('date_from', filterDateFrom.value);
@@ -294,14 +282,14 @@
     for (let i = 0; i < 5; i++) {
       const tr = document.createElement('tr');
       tr.className = 'skeleton-row';
-      tr.innerHTML = '<td colspan="7"><div class="skeleton" style="height:20px"></div></td>';
+      tr.innerHTML = '<td colspan="6"><div class="skeleton" style="height:20px"></div></td>';
       tbody.appendChild(tr);
     }
   }
 
   function renderTable(data) {
     if (!data || data.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#64748b">No logs found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#64748b">No logs found.</td></tr>';
       return;
     }
     tbody.innerHTML = data.map(row => {
@@ -318,7 +306,6 @@
         '<td class="entity-id" title="' + escapeHtml(row.entity_id) + '">' + escapeHtml(String(row.entity_id).length > 16 ? String(row.entity_id).slice(0, 16) + '…' : row.entity_id) + '</td>' +
         '<td><span class="action-tag ' + tagClass + '">' + escapeHtml(row.action || '—') + '</span></td>' +
         '<td>' + escapeHtml(row.type || '—') + '</td>' +
-        '<td>' + escapeHtml(row.environment || '—') + '</td>' +
         '<td><div class="timestamp-date">' + escapeHtml(dateStr) + '</div><div class="timestamp-time">' + escapeHtml(timeStr) + '</div></td>' +
         '<td><span class="view-detail" data-id="' + row.id + '">View detail</span></td>' +
       '</tr>';
@@ -350,7 +337,7 @@
         btnNext.disabled = state.page >= state.last_page;
       })
       .catch(() => {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:24px;color:#991b1b">Failed to load.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:#991b1b">Failed to load.</td></tr>';
       });
   }
 
@@ -361,6 +348,11 @@
         state.detailJson = log;
         let metaHtml = '';
         const meta = log.metadata || {};
+        const beforeStatus = meta['before_status'] ?? null;
+        const afterStatus = meta['after_status'] ?? null;
+        const transitionSuffix = (beforeStatus || afterStatus)
+          ? ' (' + escapeHtml(beforeStatus ?? '—') + ' -> ' + escapeHtml(afterStatus ?? '—') + ')'
+          : '';
         const metaEntries = Object.entries(meta || {}).filter(([k]) => String(k).toLowerCase() !== 'ip');
         if (metaEntries.length) {
           metaHtml = '<div class="detail-row"><div class="detail-label">Metadata</div><table class="meta-table"><tbody>' +
@@ -369,9 +361,9 @@
         }
         drawerBody.innerHTML =
           '<div class="detail-row"><div class="detail-label">Actor</div><div class="detail-value">' + escapeHtml(log.actor_name || '—') + ' (' + escapeHtml(log.actor_role || '—') + ')</div></div>' +
-          '<div class="detail-row"><div class="detail-label">Action / Status</div><div class="detail-value">' + escapeHtml(log.action || '—') + ' / ' + escapeHtml(log.status || '—') + '</div></div>' +
+          '<div class="detail-row"><div class="detail-label">Action / Status</div><div class="detail-value">' + escapeHtml(log.action || '—') + ' / ' + escapeHtml(log.status || '—') + transitionSuffix + '</div></div>' +
           '<div class="detail-row"><div class="detail-label">Entity</div><div class="detail-value">' + escapeHtml(log.entity_type || '—') + ' #' + escapeHtml(log.entity_id || '—') + '</div></div>' +
-          '<div class="detail-row"><div class="detail-label">Type / Environment</div><div class="detail-value">' + escapeHtml(log.type || '—') + ' / ' + escapeHtml(log.environment || '—') + '</div></div>' +
+          '<div class="detail-row"><div class="detail-label">Type</div><div class="detail-value">' + escapeHtml(log.type || '—') + '</div></div>' +
           '<div class="detail-row"><div class="detail-label">Timestamp</div><div class="detail-value">' + escapeHtml(log.timestamp || '—') + '</div></div>' +
           '<div class="detail-row"><div class="detail-label">Message</div><div class="detail-value">' + escapeHtml(log.message || '—') + '</div></div>' +
           metaHtml;
@@ -399,7 +391,6 @@
     keyword.value = '';
     filterAction.value = '';
     filterType.value = '';
-    filterEnvironment.value = '';
     filterDateRange.value = 'last7';
     filterDateFrom.value = '';
     filterDateTo.value = '';

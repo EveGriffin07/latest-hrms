@@ -123,6 +123,8 @@ class AdminLeaveController extends Controller
             return response()->json(['message' => 'Only requests sent to admin (pending admin) can be approved or rejected here.'], 409);
         }
 
+        $beforeStatus = $leave->leave_status;
+
         $leave->leave_status = $request->input('status');
         $leave->approved_by  = Auth::id();
         $leave->decision_at  = now();
@@ -136,13 +138,19 @@ class AdminLeaveController extends Controller
 
         $typeName = $leave->leaveType->leave_name ?? 'Leave';
         $dates = $leave->start_date . ' to ' . $leave->end_date;
+        $afterStatus = $leave->leave_status;
         if ($leave->leave_status === 'approved') {
             AuditLogService::log(
                 AuditLogService::CATEGORY_LEAVE,
                 'leave_request_approved',
                 AuditLogService::STATUS_SUCCESS,
                 'Admin approved leave request (' . $typeName . ', ' . $dates . ')',
-                ['leave_request_id' => $leave->leave_request_id, 'employee_id' => $leave->employee_id],
+                [
+                    'leave_request_id' => $leave->leave_request_id,
+                    'employee_id' => $leave->employee_id,
+                    'before_status' => $beforeStatus,
+                    'after_status' => $afterStatus,
+                ],
                 $leave->employee_id,
                 AuditLogService::SEVERITY_INFO,
                 'Leave',
@@ -154,7 +162,13 @@ class AdminLeaveController extends Controller
                 'leave_request_rejected',
                 AuditLogService::STATUS_FAILED,
                 'Admin rejected leave request (reason: ' . ($leave->reject_reason ?? 'none') . ')',
-                ['leave_request_id' => $leave->leave_request_id, 'employee_id' => $leave->employee_id, 'reason' => $leave->reject_reason],
+                [
+                    'leave_request_id' => $leave->leave_request_id,
+                    'employee_id' => $leave->employee_id,
+                    'reason' => $leave->reject_reason,
+                    'before_status' => $beforeStatus,
+                    'after_status' => $afterStatus,
+                ],
                 $leave->employee_id,
                 AuditLogService::SEVERITY_INFO,
                 'Leave',

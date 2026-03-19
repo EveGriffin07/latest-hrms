@@ -39,7 +39,12 @@ class SupervisorPenaltyController extends Controller
             if ($status === $legacyPendingAdmin) {
                 $status = PenaltyRemovalRequest::STATUS_PENDING_ADMIN;
             }
-            $query->where('status', $status);
+            // Treat "Pending admin review" filter as including legacy submitted_to_admin.
+            if ($status === PenaltyRemovalRequest::STATUS_PENDING_ADMIN) {
+                $query->whereIn('status', [PenaltyRemovalRequest::STATUS_PENDING_ADMIN, $legacyPendingAdmin]);
+            } else {
+                $query->where('status', $status);
+            }
         }
 
         if ($request->filled('q')) {

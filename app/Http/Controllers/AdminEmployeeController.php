@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\Auth; // <--- ADDED: Required for Auth::id()
+use Illuminate\Support\Facades\DB;
 use App\Models\ApplicantProfile;
 use App\Models\Application;
 
@@ -108,9 +109,9 @@ class AdminEmployeeController extends Controller
         })->values();
 
         $totalApplicants    = ApplicantProfile::count();
-        $approvedApplicants = $latestApplications->filter(
-            fn ($app) => ($app->app_stage === 'Approved')
-        )->count();
+        // Updated workflow: “Approve” action removed from applicant list.
+        // Track converted applicants via applicant_profiles.status.
+        $approvedApplicants = $allApplicants->where('status', 'converted')->count();
 
         $perPage = 10;
         $page = request()->input('page_applicants', 1);
@@ -175,7 +176,9 @@ class AdminEmployeeController extends Controller
             ->whereDate('end_date', '>=', $today)
             ->count();
         $totalApplicants    = ApplicantProfile::count();
-        $approvedApplicants = $latestApplications->filter(fn ($a) => $a->app_stage === 'Approved')->count();
+        // Updated workflow: “Approve” action removed from applicant list.
+        // Track converted applicants via applicant_profiles.status.
+        $approvedApplicants = $applicants->where('status', 'converted')->count();
 
         return view('admin.employee_add', compact(
             'departments',
@@ -201,6 +204,14 @@ class AdminEmployeeController extends Controller
         if ($request->filled('applicant_id')) {
             $applicant = ApplicantProfile::with('user')->findOrFail($request->input('applicant_id'));
 
+            // Prevent duplicate conversion (UI disables, but we enforce server-side too)
+            if (strtolower((string) ($applicant->status ?? '')) === 'converted') {
+                return redirect()
+                    ->back()
+                    ->withErrors(['applicant_id' => 'This applicant has already been converted.'])
+                    ->withInput();
+            }
+
             $latestApplication = Application::where('applicant_id', $applicant->applicant_id)
                 ->latest()
                 ->first();
@@ -217,8 +228,9 @@ class AdminEmployeeController extends Controller
             'email'          => ['required', 'email', 'max:255', $emailRule],
             'phone'          => ['nullable', 'string', 'max:50'],
             'department_id'  => ['required', Rule::exists('departments', 'department_id')],
+            'supervisor_id'  => ['nullable', Rule::exists('employees', 'employee_id')],
             'position_id'    => ['required', Rule::exists('positions', 'position_id')],
-            'hire_date'      => ['required', 'date'],
+            'hire_date'      => ['required', 'date', 'after_or_equal:today'],
             'employee_status'=> ['required', Rule::in(['active', 'inactive', 'terminated'])],
             'address'        => ['nullable', 'string'],
             'base_salary'    => ['required', 'numeric', 'min:0'],
@@ -226,47 +238,84 @@ class AdminEmployeeController extends Controller
 
         $usingExistingUser = false;
         $tempPassword = null;
-
-        if ($applicant && $applicant->user) {
-            $user = $applicant->user;
-            $user->name = $validated['name'] ?? $applicant->full_name;
-            $user->email = $validated['email'] ?? $applicant->email;
-            $user->role = 'employee';
-
-            // Carry over avatar from applicant profile when available
-            if ($applicant->avatar_path && empty($user->avatar_path)) {
-                $user->avatar_path = $applicant->avatar_path;
+        DB::transaction(function () use (
+            $validated,
+            $applicant,
+            $latestApplication,
+            &$usingExistingUser,
+            &$tempPassword
+        ) {
+            $selectedSupervisor = null;
+            $effectiveDepartmentId = (int) $validated['department_id'];
+            if (!empty($validated['supervisor_id'])) {
+                $selectedSupervisor = Employee::with('user')->find($validated['supervisor_id']);
+                if ($selectedSupervisor && !empty($selectedSupervisor->department_id)) {
+                    $effectiveDepartmentId = (int) $selectedSupervisor->department_id;
+                }
             }
-            $user->save();
-            $usingExistingUser = true;
-        } else {
-            $tempPassword = Str::random(10);
-            $user = User::create([
-                'name'     => $validated['name'],
-                'email'    => $validated['email'],
-                'password' => Hash::make($tempPassword),
-                'role'     => 'employee',
+
+            if ($applicant && $applicant->user) {
+                $user = $applicant->user;
+                $user->name = $validated['name'] ?? $applicant->full_name;
+                $user->email = $validated['email'] ?? $applicant->email;
+                $user->role = 'employee';
+                $user->dept_id = $effectiveDepartmentId;
+
+                // Carry over avatar from applicant profile when available
+                if ($applicant->avatar_path && empty($user->avatar_path)) {
+                    $user->avatar_path = $applicant->avatar_path;
+                }
+                $user->save();
+                $usingExistingUser = true;
+            } else {
+                $tempPassword = Str::random(10);
+                $user = User::create([
+                    'name'     => $validated['name'],
+                    'email'    => $validated['email'],
+                    'password' => Hash::make($tempPassword),
+                    'role'     => 'employee',
+                    'dept_id'  => $effectiveDepartmentId,
+                ]);
+            }
+
+            Employee::create([
+                'user_id'         => $user->user_id,
+                'department_id'   => $effectiveDepartmentId,
+                'supervisor_id'   => $validated['supervisor_id'] ?? null, // optional
+                'position_id'     => $validated['position_id'],
+                'employee_code'   => $this->generateEmployeeCode(),
+                'employee_status' => $validated['employee_status'],
+                'hire_date'       => $validated['hire_date'],
+                'base_salary'     => $validated['base_salary'],
+                'phone'           => $validated['phone'] ?? ($applicant?->phone ?? null),
+                'address'         => $validated['address'] ?? $this->resolveApplicantAddress($applicant),
             ]);
-        }
 
-        $employee = Employee::create([
-            'user_id'         => $user->user_id,
-            'department_id'   => $validated['department_id'],
-            'supervisor_id'   => $request->input('supervisor_id'), // <--- Already correctly added by you!
-            'position_id'     => $validated['position_id'],
-            'employee_code'   => $this->generateEmployeeCode(),
-            'employee_status' => $validated['employee_status'],
-            'hire_date'       => $validated['hire_date'],
-            'base_salary'     => $validated['base_salary'],
-            'phone'           => $validated['phone'] ?? ($applicant?->phone ?? null),
-            'address'         => $validated['address'] ?? ($applicant?->location ?? null),
-        ]);
+            // Keep Department Management in sync:
+            // if this department has no manager yet, auto-assign the selected supervisor.
+            if (
+                $selectedSupervisor &&
+                $selectedSupervisor->user_id &&
+                (int) ($selectedSupervisor->department_id ?? 0) === (int) $effectiveDepartmentId
+            ) {
+                Department::query()
+                    ->where('department_id', $effectiveDepartmentId)
+                    ->whereNull('manager_id')
+                    ->update(['manager_id' => $selectedSupervisor->user_id]);
+            }
 
+            // Keep existing pipeline compatibility
+            if ($latestApplication) {
+                $latestApplication->app_stage = 'Hired';
+                $latestApplication->save();
+            }
 
-        if ($latestApplication) {
-            $latestApplication->app_stage = 'Hired';
-            $latestApplication->save();
-        }
+            // Step 4: mark the applicant as converted
+            if ($applicant) {
+                $applicant->status = 'converted';
+                $applicant->save();
+            }
+        });
 
         $message = $usingExistingUser
             ? 'Employee created from applicant profile.'
@@ -306,6 +355,49 @@ class AdminEmployeeController extends Controller
     }
 
     /**
+     * Update employee status directly from the Employee Overview table.
+     */
+    public function updateStatus(Request $request, Employee $employee)
+    {
+        $validated = $request->validate([
+            'employee_status' => ['required', Rule::in(['active', 'inactive', 'terminated'])],
+        ]);
+
+        $employee->employee_status = $validated['employee_status'];
+        $employee->save();
+
+        return redirect()->back()->with('success', 'Employee status updated successfully.');
+    }
+
+    /**
+     * Bulk update employee statuses from the Employee Overview screen.
+     * Expected payload: statuses[employee_id] = employee_status
+     */
+    public function bulkUpdateStatus(Request $request)
+    {
+        $validated = $request->validate([
+            'statuses' => ['required', 'array', 'min:1'],
+            'statuses.*' => ['required', Rule::in(['active', 'inactive', 'terminated'])],
+        ]);
+
+        $statuses = $validated['statuses'];
+
+        return DB::transaction(function () use ($statuses) {
+            foreach ($statuses as $employeeId => $newStatus) {
+                /** @var Employee|null $employee */
+                $employee = Employee::find($employeeId);
+                if (!$employee) {
+                    continue; // ignore invalid ids (validation doesn't check existence here)
+                }
+                $employee->employee_status = $newStatus;
+                $employee->save();
+            }
+
+            return redirect()->back()->with('success', 'Employee statuses updated successfully.');
+        });
+    }
+
+    /**
      * Get the latest application per applicant (keyed by applicant_id).
      */
     private function latestApplicationsByApplicant($applicantIds = null)
@@ -326,5 +418,31 @@ class AdminEmployeeController extends Controller
         }
 
         return $query->get()->keyBy('applicant_id');
+    }
+
+    /**
+     * Build a full address string from applicant profile address fields.
+     * Falls back to legacy location when detailed fields are empty.
+     */
+    private function resolveApplicantAddress(?ApplicantProfile $applicant): ?string
+    {
+        if (!$applicant) {
+            return null;
+        }
+
+        $parts = array_filter([
+            trim((string) ($applicant->address_line_1 ?? '')),
+            trim((string) ($applicant->address_line_2 ?? '')),
+            trim((string) ($applicant->city ?? '')),
+            trim((string) ($applicant->state ?? '')),
+            trim((string) ($applicant->postcode ?? '')),
+        ], fn ($value) => $value !== '');
+
+        if (!empty($parts)) {
+            return implode(', ', $parts);
+        }
+
+        $legacyLocation = trim((string) ($applicant->location ?? ''));
+        return $legacyLocation !== '' ? $legacyLocation : null;
     }
 }

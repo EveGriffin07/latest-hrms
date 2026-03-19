@@ -206,7 +206,8 @@ class AdminAttendanceController extends Controller
         $rows = array_slice($rows, $offset, $perPage);
 
         $data = array_map(function ($r) {
-            $r['status_display'] = $r['status'] === 'leave' ? 'Absent/Leave' : ucfirst($r['status']);
+            // Display label for UI. Keep leave distinct; UI can aggregate counts when needed.
+            $r['status_display'] = ucfirst((string) ($r['status'] ?? ''));
             return $r;
         }, $rows);
 

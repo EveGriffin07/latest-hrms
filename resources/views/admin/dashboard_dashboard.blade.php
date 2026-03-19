@@ -154,7 +154,8 @@
                 <li><span>New Applicants (Week)</span><strong>{{ $newApplicants }}</strong></li>
                 <li><span>Interviews Scheduled</span><strong>{{ $interviewsScheduled }}</strong></li>
               </ul>
-              <a href="#" class="module-link">Go to Recruitment</a>
+              {{-- Updated Link --}}
+              <a href="{{ route('admin.recruitment.index') }}" class="module-link">Go to Recruitment</a>
             </div>
 
             <div class="panel module-card">
@@ -166,7 +167,8 @@
                 <li><span>Completed This Cycle</span><strong>{{ $completedReviews }}</strong></li>
                 <li><span>Average KPI Score</span><strong>{{ number_format($avgKpiScore, 1) }}%</strong></li>
               </ul>
-              <a href="#" class="module-link">Go to Appraisal</a>
+              {{-- Updated Link --}}
+              <a href="{{ route('admin.appraisal') }}" class="module-link">Go to Appraisal</a>
             </div>
 
             <div class="panel module-card">
@@ -178,11 +180,11 @@
                 <li><span>Completed Trainings</span><strong>{{ $completedTrainings }}</strong></li>
                 <li><span>Total Participants</span><strong>{{ $totalParticipants }}</strong></li>
               </ul>
-              <a href="#" class="module-link">Go to Training</a>
+              {{-- Updated Link --}}
+              <a href="{{ route('admin.training') }}" class="module-link">Go to Training</a>
             </div>
 
           </div>
-
           <!-- Central Reports & Analytics (Admin: all employees) -->
           <section class="reports-card">
             <div style="display:flex; justify-content:space-between; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -225,34 +227,34 @@
               </div>
               <div>
                 <label>From</label>
-                <input type="date" value="{{ $fromVal }}" readonly>
+                <input type="date" id="centralReportsFrom" value="{{ $fromVal }}" readonly>
               </div>
               <div>
                 <label>To</label>
-                <input type="date" value="{{ $toVal }}" readonly>
+                <input type="date" id="centralReportsTo" value="{{ $toVal }}" readonly>
               </div>
             </form>
 
             <div class="mini-cards">
               <div class="mini-card">
                 <h4>Attendance Rate</h4>
-                <div class="value">{{ $reportAttendance['attendance_rate'] ?? 0 }}%</div>
+                  <div class="value" id="miniAttendanceRate">{{ $reportAttendance['attendance_rate'] ?? 0 }}%</div>
                 <p class="muted">Present vs total days (All employees)</p>
               </div>
               <div class="mini-card">
                 <h4>Overtime Hours</h4>
-                <div class="value">{{ $reportOvertime['total_hours'] ?? 0 }}h</div>
+                  <div class="value" id="miniOvertimeHours">{{ $reportOvertime['total_hours'] ?? 0 }}h</div>
                 <p class="muted">Approved OT (last 12 months)</p>
               </div>
               <div class="mini-card">
                 <h4>Leave Used</h4>
-                <div class="value">{{ isset($reportLeave['rows']) ? (int) round(collect($reportLeave['rows'])->sum('used')) : 0 }}</div>
+                  <div class="value" id="miniLeaveUsed">{{ isset($reportLeave['rows']) ? (int) round(collect($reportLeave['rows'])->sum('used')) : 0 }}</div>
                 <p class="muted">Approved days ({{ $reportLeave['year'] ?? now()->year }})</p>
               </div>
               <div class="mini-card">
                 <h4>Risk Signal</h4>
-                <div class="value">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
-                <p class="muted">Late {{ $reportAttendance['late_count'] ?? 0 }}, Absent {{ $reportAttendance['absent_count'] ?? 0 }}</p>
+                  <div class="value" id="miniRiskLabel">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
+                  <p class="muted" id="miniRiskCounts">Absent {{ $reportAttendance['absent_count'] ?? 0 }}, Late {{ $reportAttendance['late_count'] ?? 0 }}</p>
               </div>
             </div>
 
@@ -264,7 +266,7 @@
               </div>
               <table class="table-lite">
                 <thead><tr><th>Month</th><th>Hours</th><th>Cost</th></tr></thead>
-                <tbody>
+                <tbody id="overtimeTableBody">
                   @forelse(($reportOvertime['table_rows'] ?? []) as $row)
                     <tr><td>{{ $row['month'] }}</td><td>{{ $row['hours'] }}h</td><td>RM{{ number_format($row['cost']) }}</td></tr>
                   @empty
@@ -275,21 +277,45 @@
             </section>
 
             <section class="reports-card report-section" id="section-leave" style="box-shadow:none; margin-top:12px;">
-              <h4 style="margin:0 0 6px;"><i class="fa-solid fa-umbrella-beach"></i> Leave Usage (All employees)</h4>
-              <p class="muted" style="margin:0 0 10px;">Usage by type with a compact bar chart and balances table ({{ $reportLeave['year'] ?? now()->year }}).</p>
-              <div class="chart-box" style="margin-bottom:12px; min-height:220px;">
-                <canvas id="admin-chart-leave" class="chart-canvas"></canvas>
+              <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+                <div>
+                  <h4 style="margin:0 0 6px;"><i class="fa-solid fa-umbrella-beach"></i> Leave Usage (All employees)</h4>
+                  <p class="muted" style="margin:0;">Balances and usage by type for <strong id="leaveYearStrong">{{ $reportLeave['year'] ?? now()->year }}</strong>.</p>
+                </div>
+                <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <span style="width:10px; height:10px; background:#38bdf8; border-radius:2px; display:inline-block;"></span>
+                    <span class="muted" style="font-size:13px;">Used</span>
+                  </div>
+                  <div style="display:flex; gap:8px; align-items:center;">
+                    <span style="width:10px; height:10px; background:#22c55e; border-radius:2px; display:inline-block;"></span>
+                    <span class="muted" style="font-size:13px;">Remaining</span>
+                  </div>
+                </div>
               </div>
-              <table class="table-lite">
-                <thead><tr><th>Type</th><th>Used</th><th>Remaining</th></tr></thead>
-                <tbody>
-                  @forelse(($reportLeave['rows'] ?? []) as $row)
-                    <tr><td>{{ $row['type'] }}</td><td>{{ rtrim(rtrim(number_format((float) $row['used'], 2), '0'), '.') }}</td><td>{{ rtrim(rtrim(number_format((float) $row['remaining'], 2), '0'), '.') }}</td></tr>
-                  @empty
-                    <tr><td colspan="3" class="muted">No leave data for this year.</td></tr>
-                  @endforelse
-                </tbody>
-              </table>
+
+              <div style="display:grid; grid-template-columns:minmax(0, 1.15fr) minmax(0, 0.85fr); gap:16px; margin-top:14px;">
+                <div class="chart-box" style="min-height:230px;">
+                  <canvas id="admin-chart-leave" class="chart-canvas"></canvas>
+                </div>
+
+                <div>
+                  <table class="table-lite">
+                    <thead><tr><th>Type</th><th>Used</th><th>Remaining</th></tr></thead>
+                    <tbody id="leaveTableBody">
+                      @forelse(($reportLeave['rows'] ?? []) as $row)
+                        <tr>
+                          <td>{{ $row['type'] }}</td>
+                          <td>{{ rtrim(rtrim(number_format((float) $row['used'], 2), '0'), '.') }}</td>
+                          <td>{{ rtrim(rtrim(number_format((float) $row['remaining'], 2), '0'), '.') }}</td>
+                        </tr>
+                      @empty
+                        <tr><td colspan="3" class="muted">No leave data for this year.</td></tr>
+                      @endforelse
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </section>
 
             <section class="reports-card report-section" id="section-predictive" style="box-shadow:none; margin-top:12px;">
@@ -298,17 +324,17 @@
               <div class="mini-cards" style="margin-top:0;">
                 <div class="mini-card">
                   <h4>Attendance Risk</h4>
-                  <div class="value">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
+                  <div class="value" id="predictiveAttendanceRiskLabel">{{ $reportPredictive['attendance_risk_label'] ?? 'Low' }}</div>
                   <p class="muted">Score {{ $reportPredictive['attendance_risk_score'] ?? 0 }} (last 30 days)</p>
                 </div>
                 <div class="mini-card">
                   <h4>Projected OT Cost</h4>
-                  <div class="value">RM{{ number_format((int) ($reportPredictive['projected_ot_cost'] ?? 0)) }}</div>
+                  <div class="value" id="predictiveProjectedOtCost">RM{{ number_format((int) ($reportPredictive['projected_ot_cost'] ?? 0)) }}</div>
                   <p class="muted">Avg last 3 months (All employees)</p>
                 </div>
                 <div class="mini-card">
                   <h4>Leave Signal</h4>
-                  <div class="value">{{ $reportPredictive['leave_signal'] ?? 'OK' }}</div>
+                  <div class="value" id="predictiveLeaveSignal">{{ $reportPredictive['leave_signal'] ?? 'OK' }}</div>
                   <p class="muted">Types at/below 0 remaining</p>
                 </div>
               </div>
@@ -324,17 +350,30 @@
               <h3><i class="fa-solid fa-calendar-check"></i> Upcoming Interviews</h3>
             </div>
             <ul class="announcement-list">
-              @forelse($upcomingInterviews as $interview)
+              @php
+                  // 1. Filter out interviews that have already passed
+                  // 2. Sort them so the soonest interview is at the top
+                  $activeInterviews = collect($upcomingInterviews)->filter(function($interview) {
+                      // Note: Change 'interview_date' if your database column is named something else (like 'scheduled_at')
+                      $dateStr = $interview->interview_date ?? $interview->scheduled_at ?? $interview->updated_at;
+                      return \Carbon\Carbon::parse($dateStr)->startOfDay()->gte(\Carbon\Carbon::today());
+                  })->sortBy(function($interview) {
+                      return $interview->interview_date ?? $interview->scheduled_at ?? $interview->updated_at;
+                  });
+              @endphp
+
+              @forelse($activeInterviews as $interview)
               <li>
                 <div class="announcement-title">
                     {{ $interview->job->job_title ?? 'Job' }} – {{ $interview->applicant->full_name ?? 'Applicant' }}
                 </div>
                 <div class="announcement-meta">
-                    {{ $interview->updated_at->format('d M Y') }} • Online
+                    {{-- Now displays the ACTUAL interview date, not just the 'updated_at' timestamp --}}
+                    {{ \Carbon\Carbon::parse($interview->interview_date ?? $interview->scheduled_at ?? $interview->updated_at)->format('d M Y') }} • Online
                 </div>
               </li>
               @empty
-              <li style="padding: 10px; text-align: center; color: #999;">No interviews scheduled.</li>
+              <li style="padding: 10px; text-align: center; color: #999;">No upcoming interviews scheduled.</li>
               @endforelse
             </ul>
           </div>
@@ -375,80 +414,203 @@
             const reportSections = document.querySelectorAll('.report-section');
             if (!reportButtons.length) return;
 
-            const otLabels = @json($reportOvertime['labels'] ?? []);
-            const otCost = @json($reportOvertime['cost_data'] ?? []);
+            let otLabels = @json($reportOvertime['labels'] ?? []);
+            let otCost = @json($reportOvertime['cost_data'] ?? []);
 
-            const leaveLabels = @json($reportLeave['labels'] ?? []);
-            const leaveUsed = @json($reportLeave['used'] ?? []);
-            const leaveRemaining = @json($reportLeave['remaining'] ?? []);
+            let leaveLabels = @json($reportLeave['labels'] ?? []);
+            let leaveUsed = @json($reportLeave['used'] ?? []);
+            let leaveRemaining = @json($reportLeave['remaining'] ?? []);
 
-            let overtimeChartCreated = false;
-            let leaveChartCreated = false;
+            let overtimeChart = null;
+            let leaveChart = null;
 
-            function maybeCreateOvertimeChart() {
-                if (overtimeChartCreated) return;
+            const centralDataEndpoint = "{{ route('admin.reports.central_data') }}";
+
+            function ensureOvertimeChart() {
                 const el = document.getElementById('admin-chart-overtime');
                 if (!el || typeof Chart === 'undefined') return;
-                new Chart(el, {
-                    type:'line',
-                    data:{
-                        labels: otLabels.length ? otLabels : ['No data'],
-                        datasets:[{
-                            label:'OT Cost (RM)',
-                            data: otCost.length ? otCost : [0],
-                            borderColor:'#1f78f0',
-                            backgroundColor:'rgba(31,120,240,0.15)',
-                            tension:0.35,
-                            fill:true,
-                            pointRadius:5
-                        }]
-                    },
-                    options:{
-                        responsive:true,
-                        maintainAspectRatio:false,
-                        plugins:{ legend:{ display:false } },
-                        scales:{ y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } }, x:{ grid:{ display:false } } }
-                    }
-                });
-                overtimeChartCreated = true;
+
+                const labels = (otLabels && otLabels.length) ? otLabels : ['No data'];
+                const data = (otCost && otCost.length) ? otCost : [0];
+
+                if (!overtimeChart) {
+                    overtimeChart = new Chart(el, {
+                        type:'line',
+                        data:{
+                            labels,
+                            datasets:[{
+                                label:'OT Cost (RM)',
+                                data,
+                                borderColor:'#1f78f0',
+                                backgroundColor:'rgba(31,120,240,0.15)',
+                                tension:0.35,
+                                fill:true,
+                                pointRadius:5
+                            }]
+                        },
+                        options:{
+                            responsive:true,
+                            maintainAspectRatio:false,
+                            plugins:{ legend:{ display:false } },
+                            scales:{ y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } }, x:{ grid:{ display:false } } }
+                        }
+                    });
+                } else {
+                    overtimeChart.data.labels = labels;
+                    overtimeChart.data.datasets[0].data = data;
+                    overtimeChart.update();
+                }
             }
 
-            function maybeCreateLeaveChart() {
-                if (leaveChartCreated) return;
+            function ensureLeaveChart() {
                 const el = document.getElementById('admin-chart-leave');
                 if (!el || typeof Chart === 'undefined') return;
-                new Chart(el, {
-                    type:'bar',
-                    data:{
-                        labels: leaveLabels.length ? leaveLabels : ['No data'],
-                        datasets:[
-                          { label:'Used', data: leaveUsed.length ? leaveUsed : [0], backgroundColor:'#38bdf8' },
-                          { label:'Remaining', data: leaveRemaining.length ? leaveRemaining : [0], backgroundColor:'#22c55e' }
-                        ]
-                    },
-                    options:{
-                        responsive:true,
-                        maintainAspectRatio:false,
-                        plugins:{ legend:{ display:true, position:'top' } },
-                        scales:{ y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } }, x:{ grid:{ display:false } } }
-                    }
-                });
-                leaveChartCreated = true;
+
+                const labels = (leaveLabels && leaveLabels.length) ? leaveLabels : ['No data'];
+                const used = (leaveUsed && leaveUsed.length) ? leaveUsed : [0];
+                const remaining = (leaveRemaining && leaveRemaining.length) ? leaveRemaining : [0];
+
+                if (!leaveChart) {
+                    leaveChart = new Chart(el, {
+                        type:'bar',
+                        data:{
+                            labels,
+                            datasets:[
+                              { label:'Used', data: used, backgroundColor:'#38bdf8' },
+                              { label:'Remaining', data: remaining, backgroundColor:'#22c55e' }
+                            ]
+                        },
+                        options:{
+                            responsive:true,
+                            maintainAspectRatio:false,
+                            plugins:{ legend:{ display:true, position:'top' } },
+                            scales:{ y:{ beginAtZero:true, grid:{ color:'#e5e7eb' } }, x:{ grid:{ display:false } } }
+                        }
+                    });
+                } else {
+                    leaveChart.data.labels = labels;
+                    leaveChart.data.datasets[0].data = used;
+                    leaveChart.data.datasets[1].data = remaining;
+                    leaveChart.update();
+                }
             }
 
-            // Overtime is visible by default
-            maybeCreateOvertimeChart();
+            // Create the default (overtime) chart on initial load.
+            ensureOvertimeChart();
 
-            // Month selector auto-submit
-            (function () {
-                const sel = document.getElementById('monthSelect');
-                const form = document.getElementById('monthFilterForm');
-                if (sel && form) {
-                    sel.addEventListener('change', function () {
-                        form.submit();
-                    });
+            function formatNumber(n) {
+                const num = Number(n);
+                if (!isFinite(num)) return '0';
+                let s = num.toFixed(2);
+                s = s.replace(/\.?0+$/, ''); // remove trailing zeros
+                return s;
+            }
+
+            function updateOvertimeTable(tableRows) {
+                const tbody = document.getElementById('overtimeTableBody');
+                if (!tbody) return;
+                if (!Array.isArray(tableRows) || tableRows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="muted">No approved overtime in the last 12 months.</td></tr>';
+                    return;
                 }
-            })();
+                tbody.innerHTML = tableRows.map(r => {
+                    const month = r.month ?? '';
+                    const hours = r.hours ?? 0;
+                    const cost = r.cost ?? 0;
+                    return `<tr><td>${month}</td><td>${hours}h</td><td>RM${Number(cost).toLocaleString()}</td></tr>`;
+                }).join('');
+            }
+
+            function updateLeaveTable(rows) {
+                const tbody = document.getElementById('leaveTableBody');
+                if (!tbody) return;
+                if (!Array.isArray(rows) || rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="muted">No leave data for this year.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = rows.map(r => {
+                    const type = r.type ?? '';
+                    const used = r.used ?? 0;
+                    const remaining = r.remaining ?? 0;
+                    return `<tr><td>${type}</td><td>${formatNumber(used)}</td><td>${formatNumber(remaining)}</td></tr>`;
+                }).join('');
+            }
+
+            async function refreshCentralReports() {
+                const monthSel = document.getElementById('monthSelect');
+                if (!monthSel) return;
+
+                const month = monthSel.value;
+                try {
+                    const resp = await fetch(`${centralDataEndpoint}?month=${encodeURIComponent(month)}`, {
+                        headers: { 'Accept': 'application/json' }
+                    });
+                    if (!resp.ok) throw new Error('Failed to load central report data');
+                    const json = await resp.json();
+
+                    // Update from/to inputs
+                    const fromEl = document.getElementById('centralReportsFrom');
+                    const toEl = document.getElementById('centralReportsTo');
+                    if (fromEl && json.period_start) fromEl.value = json.period_start;
+                    if (toEl && json.period_end) toEl.value = json.period_end;
+
+                    const leaveYearStrong = document.getElementById('leaveYearStrong');
+                    if (leaveYearStrong && json.period_end) {
+                        leaveYearStrong.textContent = String(json.period_end).split('-')[0] || '';
+                    }
+
+                    const ra = json.reportAttendance ?? {};
+                    const ro = json.reportOvertime ?? {};
+                    const rl = json.reportLeave ?? {};
+                    const rp = json.reportPredictive ?? {};
+
+                    // Mini cards
+                    const miniAttendance = document.getElementById('miniAttendanceRate');
+                    if (miniAttendance) miniAttendance.textContent = `${ra.attendance_rate ?? 0}%`;
+                    const miniOvertime = document.getElementById('miniOvertimeHours');
+                    if (miniOvertime) miniOvertime.textContent = `${ro.total_hours ?? 0}h`;
+                    const miniLeave = document.getElementById('miniLeaveUsed');
+                    if (miniLeave) {
+                        const rows = rl.rows ?? [];
+                        const usedSum = Array.isArray(rows) ? rows.reduce((s, r) => s + Number(r.used ?? 0), 0) : 0;
+                        miniLeave.textContent = String(Math.round(usedSum));
+                    }
+                    const miniRiskLabel = document.getElementById('miniRiskLabel');
+                    if (miniRiskLabel) miniRiskLabel.textContent = rp.attendance_risk_label ?? 'Low';
+                    const miniRiskCounts = document.getElementById('miniRiskCounts');
+                    if (miniRiskCounts) miniRiskCounts.textContent =
+                        `Absent ${ra.absent_count ?? 0}, Late ${ra.late_count ?? 0}`;
+
+                    // Predictive section cards
+                    const predRisk = document.getElementById('predictiveAttendanceRiskLabel');
+                    if (predRisk) predRisk.textContent = rp.attendance_risk_label ?? 'Low';
+                    const predOtCost = document.getElementById('predictiveProjectedOtCost');
+                    if (predOtCost) predOtCost.textContent = `RM${Math.round(rp.projected_ot_cost ?? 0)}`;
+                    const predLeave = document.getElementById('predictiveLeaveSignal');
+                    if (predLeave) predLeave.textContent = rp.leave_signal ?? 'OK';
+
+                    // Update overtime tab data (chart + table)
+                    otLabels = ro.labels ?? [];
+                    otCost = ro.cost_data ?? [];
+                    ensureOvertimeChart();
+                    updateOvertimeTable(ro.table_rows ?? []);
+
+                    // Update leave tab data (chart + table)
+                    leaveLabels = rl.labels ?? [];
+                    leaveUsed = rl.used ?? [];
+                    leaveRemaining = rl.remaining ?? [];
+                    ensureLeaveChart();
+                    updateLeaveTable(rl.rows ?? []);
+
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+
+            const monthSelect = document.getElementById('monthSelect');
+            if (monthSelect) {
+                monthSelect.addEventListener('change', () => refreshCentralReports());
+            }
 
             reportButtons.forEach(btn => {
                 btn.addEventListener('click', () => {
@@ -462,8 +624,8 @@
                         if (active) matched = true;
                     });
                     if (!matched) reportSections.forEach(sec => sec.classList.remove('active'));
-                    if (target === 'overtime') maybeCreateOvertimeChart();
-                    if (target === 'leave') maybeCreateLeaveChart();
+                    if (target === 'overtime') ensureOvertimeChart();
+                    if (target === 'leave') ensureLeaveChart();
                 });
             });
         })();

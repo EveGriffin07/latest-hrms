@@ -40,18 +40,20 @@ class LoginController extends Controller
                 AuditLogService::SEVERITY_INFO
             );
 
-            $role = strtolower(trim((string) ($user->role ?? '')));
+           $role = strtolower(trim((string) ($user->role ?? '')));
+            
+            // USE 'intended()' SO IT REMEMBERS THE VERIFICATION EMAIL LINK!
             if (in_array($role, ['admin', 'administrator', 'hr', 'manager'], true)) {
-                return redirect()->route('admin.dashboard');
+                return redirect()->intended(route('admin.dashboard'));
             }
             if ($role === 'supervisor') {
-                return redirect()->route('employee.overtime_inbox.index');
+                return redirect()->intended(route('employee.overtime_inbox.index'));
             }
             if ($role === 'employee') {
-                return redirect()->route('employee.dashboard');
+                return redirect()->intended(route('employee.dashboard'));
             }
             if ($role === 'applicant') {
-                return redirect()->route('applicant.jobs');
+                return redirect()->intended(route('applicant.jobs'));
             }
             return redirect()->route('login');
         }

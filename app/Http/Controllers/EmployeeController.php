@@ -18,6 +18,7 @@ use App\Models\LeaveType;
 use App\Models\OvertimeClaim;
 use App\Models\OvertimeRecord;
 use App\Models\Penalty;
+use App\Services\AttendanceEvaluationService;
 
 class EmployeeController extends Controller
 {
@@ -190,26 +191,82 @@ public function scanQr($token)
         $periodEnd = $periodEnd ?: Carbon::today();
         $periodStart = $periodStart ?: $periodEnd->copy()->subDays(29);
 
+        // Load employees so we can evaluate working-day rules consistently.
+        $employees = Employee::whereIn('employee_id', $employeeIds)->get();
+        $employeeCount = max(1, $employees->count());
+
+        // Attendance records (if present) for the period keyed by employee+date.
         $records = Attendance::whereIn('employee_id', $employeeIds)
             ->whereBetween('date', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
+            ->get()
+            ->keyBy(function ($a) {
+                return $a->employee_id . '_' . Carbon::parse($a->date)->format('Y-m-d');
+            });
+
+        // Approved leave overlay for the same period, keyed by employee+date.
+        $leaves = LeaveRequest::where('leave_status', 'approved')
+            ->whereIn('employee_id', $employeeIds)
+            ->where(function ($q) use ($periodStart, $periodEnd) {
+                $q->whereDate('start_date', '<=', $periodEnd->format('Y-m-d'))
+                    ->whereDate('end_date', '>=', $periodStart->format('Y-m-d'));
+            })
             ->get();
 
+        $leaveSet = [];
+        foreach ($leaves as $l) {
+            $s = Carbon::parse($l->start_date)->startOfDay();
+            $e = Carbon::parse($l->end_date)->startOfDay();
+            for ($d = $s->copy(); $d->lte($e) && $d->lte($periodEnd); $d->addDay()) {
+                if ($d->gte($periodStart)) {
+                    $leaveSet[$l->employee_id][$d->format('Y-m-d')] = true;
+                }
+            }
+        }
+
+        $service = app(AttendanceEvaluationService::class);
+
         $totalDays = $periodStart->diffInDays($periodEnd) + 1;
-        $presentCount = $records->where('at_status', 'present')->count();
-        // For dashboard risk counts, use penalties (system-generated) as the source of truth.
-        // This avoids mismatches when absences exist without attendance rows (backfill), and matches “My Penalties”.
-        $lateCount = Penalty::whereIn('employee_id', $employeeIds)
-            ->where('penalty_type', 'late')
-            ->whereBetween('assigned_at', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
-            ->count();
-        $absentCount = Penalty::whereIn('employee_id', $employeeIds)
-            ->where('penalty_type', 'absent')
-            ->whereBetween('assigned_at', [$periodStart->format('Y-m-d'), $periodEnd->format('Y-m-d')])
-            ->count();
-        $leaveCount = $records->where('at_status', 'leave')->count();
-        $expectedRecords = $totalDays * count($employeeIds);
-        $attendanceRate = $expectedRecords > 0
-            ? (int) round(($presentCount + $lateCount) / $expectedRecords * 100)
+        $workingDaySlots = 0; // denominator for attendance rate (working days only; excludes inactive/off/holiday/leave)
+
+        $presentCount = 0;
+        $lateCount = 0;
+        $absentCount = 0;
+        $leaveCount = 0;
+
+        for ($d = $periodStart->copy()->startOfDay(); $d->lte($periodEnd->copy()->startOfDay()); $d->addDay()) {
+            $dateStr = $d->format('Y-m-d');
+            foreach ($employees as $emp) {
+                $eid = $emp->employee_id;
+
+                // Leave supersedes late/absent (approved leave day)
+                if (isset($leaveSet[$eid][$dateStr])) {
+                    $leaveCount++;
+                    continue;
+                }
+
+                $att = $records->get($eid . '_' . $dateStr);
+                $eval = $service->evaluate($emp, $d->copy(), $att);
+                $status = (string) ($eval['primary_status'] ?? 'absent');
+                $isWorkingDay = (bool) ($eval['is_working_day'] ?? false);
+
+                if (! $isWorkingDay) {
+                    continue;
+                }
+
+                // Working day counts
+                $workingDaySlots++;
+                if ($status === 'present') {
+                    $presentCount++;
+                } elseif ($status === 'late') {
+                    $lateCount++;
+                } elseif ($status === 'absent') {
+                    $absentCount++;
+                }
+            }
+        }
+
+        $attendanceRate = $workingDaySlots > 0
+            ? (int) round(($presentCount + $lateCount) / $workingDaySlots * 100)
             : 0;
 
         // Last 7 days trend (day label + counts per status)
@@ -221,14 +278,30 @@ public function scanQr($token)
         $dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
         for ($i = 6; $i >= 0; $i--) {
-            $d = Carbon::today()->subDays($i);
+            $d = $periodEnd->copy()->startOfDay()->subDays($i);
             $dateStr = $d->format('Y-m-d');
             $trendLabels[] = $dayNames[(int) $d->format('w')];
-            $dayRecords = $records->where('date', $dateStr);
-            $trendPresent[] = $dayRecords->where('at_status', 'present')->count();
-            $trendLate[] = $dayRecords->where('at_status', 'late')->count();
-            $trendAbsent[] = $dayRecords->where('at_status', 'absent')->count();
-            $trendLeave[] = $dayRecords->where('at_status', 'leave')->count();
+            $p = 0; $l = 0; $a = 0; $lv = 0;
+            foreach ($employees as $emp) {
+                $eid = $emp->employee_id;
+                if (isset($leaveSet[$eid][$dateStr])) {
+                    $lv++;
+                    continue;
+                }
+                $att = $records->get($eid . '_' . $dateStr);
+                $eval = $service->evaluate($emp, $d->copy(), $att);
+                if (! ($eval['is_working_day'] ?? false)) {
+                    continue;
+                }
+                $status = (string) ($eval['primary_status'] ?? 'absent');
+                if ($status === 'present') $p++;
+                elseif ($status === 'late') $l++;
+                elseif ($status === 'absent') $a++;
+            }
+            $trendPresent[] = $p;
+            $trendLate[] = $l;
+            $trendAbsent[] = $a;
+            $trendLeave[] = $lv;
         }
 
         $highlights = [];
@@ -253,7 +326,7 @@ public function scanQr($token)
             'late_count'      => $lateCount,
             'absent_count'    => $absentCount,
             'leave_count'     => $leaveCount,
-            'employee_count'  => count($employeeIds),
+            'employee_count'  => $employeeCount,
             'trend_labels'   => $trendLabels,
             'trend_present'   => $trendPresent,
             'trend_late'     => $trendLate,

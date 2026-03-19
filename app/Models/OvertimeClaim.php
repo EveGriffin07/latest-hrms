@@ -150,7 +150,16 @@ class OvertimeClaim extends Model
     /** Employee can cancel only when SUBMITTED_TO_SUPERVISOR (supervisor has not acted). */
     public function isCancellableByEmployee(): bool
     {
-        return $this->status === self::STATUS_SUBMITTED_TO_SUPERVISOR;
+        if ($this->status === self::STATUS_SUBMITTED_TO_SUPERVISOR) {
+            return true;
+        }
+
+        // If the requester is a supervisor and the claim is submitted directly to admin,
+        // allow cancel while admin has not acted yet.
+        return $this->status === self::STATUS_ADMIN_PENDING
+            && $this->admin_action_at === null
+            && $this->user_id !== null
+            && (int) $this->user_id === (int) $this->supervisor_id;
     }
 
     /** Only assigned supervisor (claim's supervisor_id is user_id) can act when SUBMITTED_TO_SUPERVISOR. */

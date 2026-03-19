@@ -91,12 +91,22 @@ class OnboardingController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
-            'employee_id'   => 'required|exists:employees,employee_id',
-            'supervisor_id' => 'required|exists:employees,employee_id', // NEW VALIDATION
-            'startDate'     => 'required|date',
-            'deadline'      => 'required|date|after_or_equal:startDate',
-        ]);
+        $validated = $request->validate([
+        'employee_id'   => 'required|exists:employees,employee_id',
+        'supervisor_id' => 'required|exists:employees,employee_id|different:employee_id',
+        'startDate'     => 'required|date|after_or_equal:today',
+        'deadline'      => 'required|date|after_or_equal:startDate',
+        'assets'        => 'nullable|array',
+        'assets.*'      => 'string',
+        'access'        => 'nullable|array',
+        'access.*'      => 'string',
+        'default_tasks' => 'required|array|min:1',
+        'customTask'    => 'nullable|string|max:500',
+    ], [
+        'supervisor_id.different' => 'The supervisor cannot be the same person as the new hire.',
+        'deadline.after_or_equal' => 'The deadline must be on or after the start date.',
+        'default_tasks.required'  => 'Please select at least one standard HR checklist task.',
+    ]);
 
         $employee = Employee::findOrFail($request->employee_id);
 

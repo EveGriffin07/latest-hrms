@@ -96,7 +96,29 @@ class AdminDepartmentController extends Controller
             ->orderBy('employee_code')
             ->get();
         $allEmployees = $employeesInDept->concat($employeesOther);
-        return view('admin.departments.edit', compact('department', 'managers', 'allEmployees', 'employeesInDept'));
+
+        // Build a lookup: manager user_id => subordinate employee_id[]
+        // so UI can auto-tick employees assigned under selected supervisor.
+        $managerToSubordinateIds = [];
+        $managerEmpIds = Employee::query()
+            ->whereIn('user_id', $managers->pluck('user_id'))
+            ->pluck('employee_id', 'user_id');
+        foreach ($managerEmpIds as $managerUserId => $managerEmployeeId) {
+            $subordinateIds = Employee::query()
+                ->where('supervisor_id', $managerEmployeeId)
+                ->pluck('employee_id')
+                ->values()
+                ->all();
+            $managerToSubordinateIds[(string) $managerUserId] = $subordinateIds;
+        }
+
+        return view('admin.departments.edit', compact(
+            'department',
+            'managers',
+            'allEmployees',
+            'employeesInDept',
+            'managerToSubordinateIds'
+        ));
     }
 
     public function update(Request $request, Department $department)

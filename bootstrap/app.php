@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'payroll.unlocked' => \App\Http\Middleware\EnsurePayrollUnlocked::class,
             'role'             => \App\Http\Middleware\EnsureRole::class,
         ]);
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

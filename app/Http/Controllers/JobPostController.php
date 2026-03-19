@@ -235,27 +235,29 @@ class JobPostController extends Controller
     // MANAGER ACTION CENTER: Submit Requisition
     // ==========================================
     public function storeRequisition(Request $request)
-    {
-        $request->validate([
-            'job_title'       => 'required|string|max:255',
-            'employment_type' => 'required|string',
-            'headcount'       => 'required|integer|min:1',
-            'justification'   => 'required|string'
-        ]);
+{
+    // 1. Get the current logged-in employee (the supervisor)
+    $employee = auth()->user()->employee;
 
-        $user = Auth::user();
-        $employee = \App\Models\Employee::where('user_id', $user->user_id ?? $user->id)->first();
+    // 2. Validate the request
+    $validated = $request->validate([
+        'job_title'       => 'required|string|max:255',
+        'employment_type' => 'required|string',
+        'headcount'       => 'required|integer|min:1',
+        'justification'   => 'required|string',
+    ]);
 
-        \App\Models\JobRequisition::create([
-            'requester_id'    => $employee->employee_id ?? 1, 
-            'department_id'   => $employee->department_id ?? 1,
-            'job_title'       => $request->job_title,
-            'employment_type' => $request->employment_type,
-            'headcount'       => $request->headcount,
-            'justification'   => $request->justification,
-            'status'          => 'Pending'
-        ]);
+    // 3. Create the requisition with the 'requested_by' field included
+    \App\Models\JobRequisition::create([
+        'job_title'       => $validated['job_title'],
+        'employment_type' => $validated['employment_type'],
+        'headcount'       => $validated['headcount'],
+        'justification'   => $validated['justification'],
+        'department_id'   => $employee->department_id, // Auto-assign to supervisor's dept
+        'requested_by'    => $employee->employee_id,   // THIS FIXES THE ERROR
+        'status'          => 'Pending',
+    ]);
 
-        return redirect()->back()->with('success', 'Job Requisition submitted to HR successfully! You will be notified once it is approved.');
-    }
+    return back()->with('success', 'Job requisition submitted successfully!');
+}
 }

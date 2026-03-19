@@ -217,12 +217,21 @@ class EmployeeLeaveController extends Controller
             'leave_status'  => $leaveStatus,
         ]);
 
+        $beforeStatus = null;
+        $afterStatus = $req->leave_status;
+
         AuditLogService::log(
             AuditLogService::CATEGORY_LEAVE,
             'leave_request_created',
             AuditLogService::STATUS_SUCCESS,
             'Leave request created (' . ($type->leave_name ?? '') . ', ' . $start->format('Y-m-d') . ' to ' . $end->format('Y-m-d') . ')',
-            ['leave_request_id' => $req->leave_request_id, 'leave_type' => $type->leave_name, 'total_days' => $totalDays],
+            [
+                'leave_request_id' => $req->leave_request_id,
+                'leave_type' => $type->leave_name,
+                'total_days' => $totalDays,
+                'before_status' => $beforeStatus,
+                'after_status' => $afterStatus,
+            ],
             $employee->employee_id,
             AuditLogService::SEVERITY_INFO,
             'Leave',
@@ -246,12 +255,14 @@ class EmployeeLeaveController extends Controller
             return back()->withErrors(['leave' => 'Only pending requests can be cancelled.']);
         }
 
+        $beforeStatus = $leave->leave_status;
         $leave->update([
             'leave_status' => 'cancelled',
             'decision_at'  => now(),
             'approved_by'  => null,
             'reject_reason'=> null,
         ]);
+        $afterStatus = $leave->leave_status;
 
         $typeName = $leave->leaveType->leave_name ?? 'Leave';
         AuditLogService::log(
@@ -259,7 +270,11 @@ class EmployeeLeaveController extends Controller
             'leave_request_cancelled',
             AuditLogService::STATUS_SUCCESS,
             'Leave request cancelled (' . $typeName . ')',
-            ['leave_request_id' => $leave->leave_request_id],
+            [
+                'leave_request_id' => $leave->leave_request_id,
+                'before_status' => $beforeStatus,
+                'after_status' => $afterStatus,
+            ],
             $employee->employee_id,
             AuditLogService::SEVERITY_INFO,
             'Leave',
